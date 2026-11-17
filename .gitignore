@@ -1,4 +1,4 @@
-# Local secrets and environment files
+# Secrets and local environment files
 .env
 .env.*
 !.env.example
@@ -6,7 +6,7 @@
 *.key
 .age-identity
 
-# Node / Bun builds
+# Node / Bun build outputs
 node_modules/
 dist/
 .output/
@@ -14,12 +14,13 @@ dist/
 .vinxi/
 .nitro/
 
-# Local backups: never commit plaintext data
+# Local backup data: never commit plaintext production dumps
 backup/
 backups/
-*.sql
 *.dump
 *.tar
 *.tar.gz
 *.age
 *.sha256
+
+# Keep SQL migration files tracked: do not add a global *.sql ignore rule.
