@@ -1,23 +1,11 @@
 # Prototype archive
 
-This folder contains UI-only HTML experiments copied from `lopicotion-coder/backup`.
+This directory preserves three My School prototype generations:
 
-## Versions
+1. `ui-v4.1/index.html` — original HTML dashboard prototype.
+2. `modular-phase-9/index.html` — role-based HTML prototype with early transport and parental-control mock screens.
+3. `lovable-command-center/` — text source archive from the Lovable project **My School Command Center**.
 
-### `ui-v4.1/index.html`
-Earlier single-file My School UI prototype with dashboard concepts for platform owner, school admin, teacher, attendance, supervisor, parent, and student.
+The HTML prototypes are static files. The Lovable app is a TanStack Start/React demo with fictional seed data and a placeholder home route. None is confirmed as the production My School frontend.
 
-### `modular-phase-9/index.html`
-Later modular-role UI prototype. It includes early mock screens for transport manager, bus attendant, driver, parent tracking, and parental device-control policy concepts.
-
-## Limitations
-
-Both prototypes are static/demo interfaces:
-- Data is hard-coded and fictional.
-- No production authentication or authorization.
-- No Supabase client or database connection.
-- No backend API.
-- No real GPS, device management, camera recognition, or live notifications.
-- UI actions should not be interpreted as working production workflows.
-
-Use these files as visual/interaction references only.
+The binary favicon was not included because the source connector returned it as non-text data; see `lovable-command-center/ARCHIVE-NOTES.md`.
