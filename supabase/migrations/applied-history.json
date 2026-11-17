@@ -1,0 +1,127 @@
+{
+  "captured_at": "2026-11-17",
+  "project_ref": "yigixquioguqnpbfhepi",
+  "migration_count": 30,
+  "migrations": [
+    {
+      "version": "20261114151023",
+      "name": "202611140001_foundation"
+    },
+    {
+      "version": "20261114151200",
+      "name": "202611140002_core_school"
+    },
+    {
+      "version": "20261114151243",
+      "name": "202611140003_phase3_communication_analytics"
+    },
+    {
+      "version": "20261114151441",
+      "name": "202611140004_phase5_platform_ops"
+    },
+    {
+      "version": "20261114151514",
+      "name": "202611140005_phase5_ai_budget_provider_hardening"
+    },
+    {
+      "version": "20261114151539",
+      "name": "202611140006_phase6_core_completion"
+    },
+    {
+      "version": "20261114151622",
+      "name": "202611140007_phase6_security_and_data_hardening"
+    },
+    {
+      "version": "20261114151730",
+      "name": "phase6_security_function_search_path_hardening"
+    },
+    {
+      "version": "20261114151756",
+      "name": "phase6_rag_foundation"
+    },
+    {
+      "version": "20261114151904",
+      "name": "phase6_rls_auth_initplan_optimization"
+    },
+    {
+      "version": "20261114151927",
+      "name": "phase6_runtime_login_role"
+    },
+    {
+      "version": "20261114154619",
+      "name": "phase7_communication_completion"
+    },
+    {
+      "version": "20261114154727",
+      "name": "phase7_attachment_records"
+    },
+    {
+      "version": "20261114154739",
+      "name": "phase7_storage_private_attachment_policies"
+    },
+    {
+      "version": "20261114154746",
+      "name": "phase7_notification_delivery_tracking"
+    },
+    {
+      "version": "20261114155059",
+      "name": "phase7_push_device_worker_access"
+    },
+    {
+      "version": "20261114155119",
+      "name": "phase7_notification_preferences_worker_access"
+    },
+    {
+      "version": "20261114155426",
+      "name": "phase7_notification_worker_least_privilege"
+    },
+    {
+      "version": "20261114155605",
+      "name": "phase7_communication_foreign_key_indexes"
+    },
+    {
+      "version": "20261114162352",
+      "name": "phase7_support_sla_worker"
+    },
+    {
+      "version": "20261114164930",
+      "name": "phase7_student_enrollment_access"
+    },
+    {
+      "version": "20261114165238",
+      "name": "phase7_student_password_reset_hardening"
+    },
+    {
+      "version": "20261114165426",
+      "name": "phase7_student_enrollment_query_hardening"
+    },
+    {
+      "version": "20261114183307",
+      "name": "phase7_parent_student_identity"
+    },
+    {
+      "version": "20261114183340",
+      "name": "phase7_parent_portal_snapshot"
+    },
+    {
+      "version": "20261114183437",
+      "name": "phase7_parent_portal_snapshot_hardening"
+    },
+    {
+      "version": "20261114183452",
+      "name": "phase7_parent_school_lookup"
+    },
+    {
+      "version": "20261114184136",
+      "name": "phase7_parent_student_identity_hardening"
+    },
+    {
+      "version": "20261114184148",
+      "name": "phase7_student_login_toggle_fix"
+    },
+    {
+      "version": "20261114184346",
+      "name": "phase7_parent_enrollment_notifications_and_profile"
+    }
+  ]
+}
