@@ -4,20 +4,20 @@
     {
       "version": "0.1.0",
       "branch": "release/v0.1.0-html-prototype",
-      "description": "First HTML prototype snapshot",
-      "restore_point": "7d239fcbc1eed2ba5cd14535d1fc06cb9eb8124d"
+      "restore_point": "7d239fcbc1eed2ba5cd14535d1fc06cb9eb8124d",
+      "description": "First HTML dashboard prototype archive"
     },
     {
       "version": "0.2.0",
       "branch": "release/v0.2.0-modular-prototype",
-      "description": "HTML prototypes including modular Phase 9",
-      "restore_point": "fc3c0a9023f7b73c0ebd6979add21a73f5a1ded2"
+      "restore_point": "fc3c0a9023f7b73c0ebd6979add21a73f5a1ded2",
+      "description": "HTML prototypes including modular Phase 9 demo"
     },
     {
       "version": "1.0.0",
       "branch": "release/v1.0.0-prototype-bundle",
-      "description": "Lovable source, Supabase metadata/types, encrypted backup tooling",
-      "restore_point": "TO_BE_SET_AFTER_MAIN_COMMIT"
+      "restore_point": "decc4d4a0493fad7cd4dfc20905cbb4c2ccfe621",
+      "description": "Full prototype source archive, Supabase metadata/types, encrypted backup automation"
     }
   ]
 }
