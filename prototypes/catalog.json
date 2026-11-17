@@ -1,0 +1,36 @@
+{
+  "archive": "My School Prototype Archive",
+  "purpose": "Versioned archive of experimental UI prototypes only",
+  "created_at": "2026-11-17",
+  "current_repository_name": "olic",
+  "preferred_repository_name": "my-school-prototype-archive",
+  "prototypes": [
+    {
+      "id": "ui-v4.1",
+      "path": "prototypes/ui-v4.1/index.html",
+      "source_repository": "lopicotion-coder/backup",
+      "source_path": "index.html",
+      "source_blob_sha": "931772f6500b2cc850ce835998fa091a64fc1d63",
+      "source_size_bytes": 43826,
+      "status": "archived-prototype",
+      "notes": "Earlier single-file UI demo; static sample data; no Supabase or backend integration."
+    },
+    {
+      "id": "modular-phase-9",
+      "path": "prototypes/modular-phase-9/index.html",
+      "source_repository": "lopicotion-coder/backup",
+      "source_path": "modular.html",
+      "source_blob_sha": "e33e1937f434ecc8978643614a6c6936e7a74878",
+      "source_size_bytes": 19851,
+      "status": "archived-prototype",
+      "notes": "Role-oriented UI mockup; transport and parental-control screens are demonstrations, not production features."
+    }
+  ],
+  "exclusions": [
+    "Production application source",
+    "Supabase database dumps",
+    "Supabase migration history for production My School",
+    "Secrets, credentials, API keys, tokens",
+    "Real student or parent data"
+  ]
+}
