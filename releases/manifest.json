@@ -17,7 +17,7 @@
       "version": "1.0.0",
       "branch": "release/v1.0.0-prototype-bundle",
       "description": "Lovable source, Supabase metadata/types, encrypted backup tooling",
-      "restore_point": "TO_BE_SET_AFTER_MAIN_COMMIT"
+      "restore_point": "17140d70f1f7eef353cc55de82adf8370477900a"
     }
   ]
 }
