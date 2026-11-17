@@ -1,0 +1,23 @@
+{
+  "captured_at": "2026-11-17",
+  "project_ref": "yigixquioguqnpbfhepi",
+  "buckets": [
+    {
+      "id": "school-files",
+      "name": "school-files",
+      "public": false,
+      "file_size_limit": 26214400,
+      "allowed_mime_types": [
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/csv"
+      ]
+    }
+  ]
+}
