@@ -1,49 +1,48 @@
-# My School — Prototype Archive
+# My School — Prototype Archive & Recovery Workspace
 
-**Purpose:** preserve experimental UI prototypes and design explorations for My School.
+This repository preserves My School experimental UI prototypes, the Lovable-built **My School Command Center** demo source, sanitized metadata from the live Supabase project, and tooling for encrypted off-site backups.
 
-> This repository is a design/prototype archive only. It is NOT the production application source, database backup, migration history, or disaster-recovery backup.
+> **Not the production application yet.** The Lovable source archived here is a fictional-data UI prototype. The live Supabase project is a separate backend resource. Do not deploy this prototype as a production school system.
 
-## Repository identity
+## Contents
 
-- Current GitHub repository name: `olic`
-- Preferred repository name: `my-school-prototype-archive`
-- Default branch: `main`
-- Visibility at time of archive creation: Public
+- `prototypes/ui-v4.1/`: original single-file HTML prototype.
+- `prototypes/modular-phase-9/`: role-oriented standalone HTML prototype.
+- `prototypes/lovable-command-center/`: text source archive from the Lovable project **My School Command Center**.
+- `supabase/`: sanitized project inventory, applied migration ledger, and generated public TypeScript types.
+- `scripts/backup/`: Storage export and restore scripts.
+- `.github/workflows/supabase-backup.yml`: scheduled/manual encrypted database + Storage backup workflow to private Cloudflare R2.
+- `docs/`: source status, branch policy, deployment and recovery instructions.
 
-## Archive layout
+## Prototype status
 
-```text
-prototypes/
-  README.md
-  catalog.json
-  ui-v4.1/
-    index.html
-  modular-phase-9/
-    index.html
-docs/
-  PRODUCTION-SOURCE-STATUS.md
+The Lovable project uses fictional demo data, browser-local state, and a placeholder home route. It is archived for recovery/design reference, not certified production-ready. Its binary favicon was not transferred through the source connector; see `prototypes/lovable-command-center/ARCHIVE-NOTES.md`.
+
+## Production database
+
+The connected My School Supabase project was identified by its school/tenant/student/guardian/attendance/AI schema. This repo contains metadata and generated public types only. The encrypted backup workflow requires GitHub Actions secrets and a private R2 bucket; no live database rows, Auth records, or Storage file contents are committed to GitHub.
+
+## Run the archived Lovable demo locally
+
+From `prototypes/lovable-command-center`:
+
+```bash
+bun install --frozen-lockfile
+bun run dev
 ```
 
-## Included prototypes
+Build and test scripts are defined in that project's `package.json`. A successful build/test run has **not** yet been asserted by this archive operation.
 
-| Version | File | Purpose |
-|---|---|---|
-| UI v4.1 | `prototypes/ui-v4.1/index.html` | Earlier multi-role dashboard prototype |
-| Modular Phase 9 | `prototypes/modular-phase-9/index.html` | Role-oriented prototype including early transport and parent-control concepts |
+## Deployment later
 
-These are standalone HTML mockups with demo data. They do not connect to Supabase, do not authenticate users, and do not persist real school data.
+The archived demo's repository root is `prototypes/lovable-command-center`. Do not connect Vercel or Cloudflare to repository root: it contains docs and archives, not a production app root. Before publishing, replace the placeholder route, run build/tests, and confirm the platform adapter. See `docs/DEPLOYMENT.md`.
 
-## Important separation
+## Branching
 
-The production My School application was developed directly in Supabase and its actual application source has not yet been located in the GitHub repositories inspected so far. Do not treat this archive as production source or as a database backup.
+- `main`: stable archive and recovery tooling.
+- `develop`: integration branch for future work.
+- `release/v0.1.0-html-prototype`: first HTML prototype snapshot.
+- `release/v0.2.0-modular-prototype`: two HTML prototypes snapshot.
+- `release/v1.0.0-prototype-bundle`: full prototype/source archive snapshot.
 
-The separate `backup` repository is the source of the two archived HTML prototypes. The `selsep-edu` repository is a different standalone education/assignments product and must remain separate.
-
-## Handling rules
-
-- Keep each prototype in its own versioned folder.
-- Do not overwrite an older prototype; add a new version folder.
-- Record source repository, original path, source commit/blob SHA, date, and known limitations in `prototypes/catalog.json`.
-- Do not add student records, credentials, API keys, database dumps, or production secrets here.
-- Keep actual production source, Supabase migrations, and encrypted database/storage backups in separate, purpose-specific repositories or storage locations.
+New work goes to `develop`, then a reviewed PR to `main`. Release branches are historical restore points; never rewrite them.
