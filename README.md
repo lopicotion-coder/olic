@@ -1,48 +1,59 @@
-# My School — Prototype Archive & Recovery Workspace
+# My School — Production Repository
 
-This repository preserves My School experimental UI prototypes, the Lovable-built **My School Command Center** demo source, sanitized metadata from the live Supabase project, and tooling for encrypted off-site backups.
+This repository is the **production source of truth** for My School. Production application code, database migrations, generated database types, deployment configuration, and operational tooling belong here. Experimental UI prototypes belong in the private repository `lopicotion-coder/draft`.
 
-> **Not the production application yet.** The Lovable source archived here is a fictional-data UI prototype. The live Supabase project is a separate backend resource. Do not deploy this prototype as a production school system.
+## Current production baseline
 
-## Contents
+The connected Supabase project was identified by its school/tenant/student/guardian/attendance/communications/AI schema:
 
-- `prototypes/ui-v4.1/`: original single-file HTML prototype.
-- `prototypes/modular-phase-9/`: role-oriented standalone HTML prototype.
-- `prototypes/lovable-command-center/`: text source archive from the Lovable project **My School Command Center**.
-- `supabase/`: sanitized project inventory, applied migration ledger, and generated public TypeScript types.
-- `scripts/backup/`: Storage export and restore scripts.
-- `.github/workflows/supabase-backup.yml`: scheduled/manual encrypted database + Storage backup workflow to private Cloudflare R2.
-- `docs/`: source status, branch policy, deployment and recovery instructions.
+- Project ref: `yigixquioguqnpbfhepi`
+- Region: `eu-west-1`
+- PostgreSQL: `17.11.0.018`
+- Applied migration ledger entries: 30
+- Public/app table inventory: 100
+- Storage buckets: 1 (`school-files`, private)
+- Edge Functions observed: 0
 
-## Prototype status
+The repository currently contains a sanitized project inventory, generated public database types, the applied migration history ledger, and encrypted backup automation.
 
-The Lovable project uses fictional demo data, browser-local state, and a placeholder home route. It is archived for recovery/design reference, not certified production-ready. Its binary favicon was not transferred through the source connector; see `prototypes/lovable-command-center/ARCHIVE-NOTES.md`.
+## Important: production frontend source is not yet present
 
-## Production database
+The frontend source that powers the actual live My School experience has **not yet been recovered**. The Lovable project called *My School Command Center* is a separate prototype with fictional seed data and a placeholder home route; it is archived in the private `draft` repository, not here.
 
-The connected My School Supabase project was identified by its school/tenant/student/guardian/attendance/AI schema. This repo contains metadata and generated public types only. The encrypted backup workflow requires GitHub Actions secrets and a private R2 bucket; no live database rows, Auth records, or Storage file contents are committed to GitHub.
+Supabase contains the production database/backend schema, but the migration-history endpoint returned migration names and versions rather than the original SQL files. Do not mistake the metadata ledger for a restore-ready migration directory.
 
-## Run the archived Lovable demo locally
+This repository is reserved for production. Do not deploy it to Vercel or Cloudflare until the actual production frontend/app source and required migrations have been added and tested.
 
-From `prototypes/lovable-command-center`:
+## Repository layout
 
-```bash
-bun install --frozen-lockfile
-bun run dev
+```text
+olic/
+├── .github/workflows/       # encrypted backup automation
+├── docs/                    # production operations and recovery runbooks
+├── releases/                # production release manifest
+├── scripts/backup/          # Storage export and restore utilities
+└── supabase/
+    ├── inventory/           # sanitized live-project snapshot
+    ├── migrations/          # applied-history ledger; original SQL still missing
+    └── types/               # generated public-schema TypeScript types
 ```
 
-Build and test scripts are defined in that project's `package.json`. A successful build/test run has **not** yet been asserted by this archive operation.
+## Branch policy
 
-## Deployment later
+- `main`: production baseline; only reviewed production-ready changes.
+- `develop`: integration branch for the next production release.
+- Use short-lived feature branches from `develop`; merge by pull request.
+- Release branches and Git tags must be cut from a reviewed `main` commit.
+- Historical `release/*-prototype` branches are retained for rollback/audit only. New prototypes go to `lopicotion-coder/draft`.
 
-The archived demo's repository root is `prototypes/lovable-command-center`. Do not connect Vercel or Cloudflare to repository root: it contains docs and archives, not a production app root. Before publishing, replace the placeholder route, run build/tests, and confirm the platform adapter. See `docs/DEPLOYMENT.md`.
+See `docs/BRANCHING-AND-RELEASES.md`.
 
-## Branching
+## Backup and recovery
 
-- `main`: stable archive and recovery tooling.
-- `develop`: integration branch for future work.
-- `release/v0.1.0-html-prototype`: first HTML prototype snapshot.
-- `release/v0.2.0-modular-prototype`: two HTML prototypes snapshot.
-- `release/v1.0.0-prototype-bundle`: full prototype/source archive snapshot.
+The daily GitHub Actions workflow creates PostgreSQL dumps and a Storage object archive, encrypts them with age, then uploads the encrypted archive to Cloudflare R2. It **will safely skip** until all required GitHub Actions secrets are configured.
 
-New work goes to `develop`, then a reviewed PR to `main`. Release branches are historical restore points; never rewrite them.
+Cloudflare R2 is not enabled on the connected account yet. Enable R2, create a private bucket, and configure the secrets described in `docs/BACKUP-RESTORE.md` before expecting a real off-site backup.
+
+## Deployment status
+
+No Vercel or Cloudflare deployment is currently linked to this repository. Vercel currently has a Git-linked project for `selsep-edu`, which is a separate product. See `docs/DEPLOYMENT.md`.
