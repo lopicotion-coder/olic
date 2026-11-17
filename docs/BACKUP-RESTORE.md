@@ -1,46 +1,61 @@
-# Supabase encrypted backup and restore
+# My School production backup and restore
 
-## Backup contents
+## Current implementation
 
-The workflow in `.github/workflows/supabase-backup.yml` creates:
-- PostgreSQL roles dump.
-- PostgreSQL schema dump (including database-level objects captured by Supabase CLI filtering).
-- PostgreSQL data dump.
-- All Storage bucket object bytes plus a manifest.
+`.github/workflows/supabase-backup.yml` is configured for:
+- Daily schedule at 02:17 UTC.
+- Manual execution through GitHub Actions.
+- Supabase CLI database dumps for roles, schema and data.
+- Private Storage object export with a manifest.
+- age encryption and SHA-256 checksum.
+- Upload of ciphertext and checksum to Cloudflare R2.
 
-It encrypts the archive with `age` and uploads only ciphertext to a private Cloudflare R2 bucket. Plaintext database dumps and Storage files are temporary on the GitHub runner and are not committed to this repository.
+The workflow checks all required secrets and skips safely when any are missing.
 
-## GitHub Actions secrets required
+## Current blocker
 
-Add under Repository → Settings → Secrets and variables → Actions:
+Cloudflare API inspection returned: **R2 must be enabled through the Cloudflare Dashboard**. No R2 bucket was verified or created. Therefore, no off-site backup has been uploaded yet.
 
-- `SUPABASE_DB_URL`: project PostgreSQL connection string.
-- `SUPABASE_URL`: Supabase API URL.
-- `SUPABASE_SERVICE_ROLE_KEY`: service-role key used by the runner only to enumerate/download private Storage objects.
-- `AGE_RECIPIENT`: public `age1...` encryption recipient.
+Enable R2, create a dedicated private bucket (recommended name: `myschool-encrypted-backups`), then configure the following GitHub Actions secrets:
+
+- `SUPABASE_DB_URL`: PostgreSQL connection string for the My School project.
+- `SUPABASE_URL`: `https://yigixquioguqnpbfhepi.supabase.co`.
+- `SUPABASE_SERVICE_ROLE_KEY`: service-role key used only by the runner to export private Storage objects.
+- `AGE_RECIPIENT`: public age recipient (starts with `age1...`).
 - `R2_ACCOUNT_ID`
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
 - `R2_BUCKET`: private R2 bucket name.
 
-Keep the matching age **private identity** offline in a password manager or another secure recovery location. Never commit it.
+Store the age **private identity** offline in a password manager or another secure recovery location. Never commit it or add it as a workflow secret unless the restore workflow explicitly requires it.
 
-## Run
+## Run and validate the first backup
 
-Actions → **My School Supabase encrypted backup** → Run workflow. It also runs daily at 02:17 UTC once all secrets are configured. Before that, the job safely skips.
+1. Configure R2 and all GitHub Actions secrets.
+2. Run Actions → **My School Supabase encrypted backup** → Run workflow.
+3. Confirm the job succeeds.
+4. Confirm the R2 object and checksum exist.
+5. Download the encrypted archive to a secure machine and verify SHA-256.
+6. Decrypt using the offline age identity.
+7. Restore to a brand-new test Supabase project.
+8. Verify table counts, RLS policies, Auth login, Storage object access and key workflows.
+9. Record the recovery time and recovery point achieved.
 
-## Restore procedure
+Do not test restoration over production.
 
-1. Download the encrypted backup object and checksum from private R2.
-2. Verify SHA-256, then decrypt using the offline age identity.
-3. Extract it on a trusted machine.
-4. Restore into a **new test Supabase project** or a compatible PostgreSQL instance first.
-5. Reconfigure service-level settings that are not in the SQL dump (Auth providers, SMTP, OAuth, custom domains and secrets).
-6. Restore Storage bytes using `scripts/backup/restore-storage.mjs` after the bucket metadata has been created/restored.
-7. Verify table counts, RLS, Auth login and Storage permissions before any production cutover.
+## Storage restore
 
-Do not test restoration over the live production database.
+Use `scripts/backup/restore-storage.mjs` only after validating the destination project and setting `CONFIRM_STORAGE_RESTORE=YES`. Restore the database/bucket metadata first, then restore the Storage object bytes and verify private bucket policies.
+
+## Service settings not included in the SQL/Storage archive
+
+Configure separately during disaster recovery:
+- Auth provider settings and OAuth secrets.
+- SMTP provider credentials and templates.
+- API keys and service secrets.
+- DNS/custom domains and TLS.
+- External integrations and webhook secrets.
 
 ## Retention
 
-Configure R2 lifecycle separately. Suggested starting point: daily backups retained for 30 days and monthly backups for 12 months. Retention is not created automatically by this repository.
+After the first successful backup, configure an R2 lifecycle policy separately. Suggested starting point: daily backups retained for 30 days and monthly backups for 12 months. This retention policy is not currently configured.
