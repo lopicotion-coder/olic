@@ -1,0 +1,25 @@
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.age-identity
+
+# Node / Bun builds
+node_modules/
+dist/
+.output/
+.tanstack/
+.vinxi/
+.nitro/
+
+# Local backups: never commit plaintext data
+backup/
+backups/
+*.sql
+*.dump
+*.tar
+*.tar.gz
+*.age
+*.sha256
