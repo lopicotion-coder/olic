@@ -1,23 +1,31 @@
-# Deployment readiness
+# Production deployment readiness
 
-## Current state
+## Current status
 
-No Vercel or Cloudflare deployment was created from this repository. The connected Vercel account currently lists a Git-linked project for `selsep-edu`, not My School. No Cloudflare Pages/Workers linkage to `olic` has been confirmed.
+**Do not deploy this repository yet.** The actual production frontend source has not been recovered and the database migration SQL files are incomplete. The private `draft` repository contains prototypes only.
 
-## Archived Lovable demo
+No Vercel or Cloudflare deployment is currently confirmed for My School:
+- Vercel's connected Git context shows `lopicotion-coder/selsep-edu`, a separate education/assignments product.
+- No Cloudflare Pages/Workers project linked to `olic` was verified.
+- Cloudflare R2 is not enabled on the connected account yet.
 
-- Repository: `lopicotion-coder/olic`
-- Root directory: `prototypes/lovable-command-center`
-- Package manager: Bun (`bun.lock`)
-- Build command: `bun run build`
-- Tests: `bun run test`
+## Intended production deployment flow
 
-The current `src/routes/index.tsx` is a placeholder screen. Replace it and complete the role-specific UX before publishing. It uses fictional data and browser-local state, not the production Supabase project.
+Once the actual frontend source is recovered and committed:
 
-## Vercel later
+1. Confirm the application framework and production build command from its real `package.json`.
+2. Keep the app root at repository root unless the source layout proves otherwise.
+3. Link the `main` branch to Vercel Production.
+4. Link `develop` to Preview.
+5. Add only required runtime environment variables using Vercel's encrypted environment-variable store; never commit secrets.
+6. Configure Cloudflare DNS/proxy only after the Vercel project and domain ownership are verified.
+7. Test authentication, role scoping, RLS, Storage permissions, and tenant isolation against a non-production test environment.
+8. Perform a rollback rehearsal before enabling real schools.
 
-When ready, create a Git-linked Vercel project from `lopicotion-coder/olic`, set Root Directory to `prototypes/lovable-command-center`, then verify the TanStack Start build and runtime settings. Map `main` to Production and `develop` to Preview only after the source is production-ready.
+## Cloudflare role
 
-## Cloudflare later
+Cloudflare can provide DNS, WAF, rate limiting, caching, and (after enabling R2) private off-site backup storage. Do not route production traffic to a prototype or the current archive.
 
-Cloudflare Pages static hosting is not automatically equivalent to a Vercel SSR deployment. Confirm the TanStack Start/Nitro Cloudflare adapter and Worker output before linking. Do not route production traffic to the HTML archive or the placeholder home route.
+## Release rule
+
+Every production deployment must use a reviewed `main` commit. Preview deployments must not use production secrets or production data unless separately approved and protected.
