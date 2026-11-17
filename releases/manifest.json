@@ -1,23 +1,26 @@
 {
-  "latest": "1.0.0",
-  "releases": [
+  "latest_production": "0.1.0",
+  "active_production_baseline": {
+    "version": "0.1.0",
+    "branch": "release/v0.1.0-production-baseline",
+    "restore_point": "13661f8ade1157f111f7f50716bf20e9b78f3c6b",
+    "description": "Production repository baseline with prototypes removed from main/develop; frontend source recovery still pending"
+  },
+  "historical_prototype_branches": [
     {
-      "version": "0.1.0",
       "branch": "release/v0.1.0-html-prototype",
-      "restore_point": "7d239fcbc1eed2ba5cd14535d1fc06cb9eb8124d",
-      "description": "First HTML dashboard prototype archive"
+      "repository": "lopicotion-coder/olic",
+      "note": "Legacy preserved branch; current prototype archive now lives in private lopicotion-coder/draft"
     },
     {
-      "version": "0.2.0",
       "branch": "release/v0.2.0-modular-prototype",
-      "restore_point": "fc3c0a9023f7b73c0ebd6979add21a73f5a1ded2",
-      "description": "HTML prototypes including modular Phase 9 demo"
+      "repository": "lopicotion-coder/olic",
+      "note": "Legacy preserved branch; current prototype archive now lives in private lopicotion-coder/draft"
     },
     {
-      "version": "1.0.0",
       "branch": "release/v1.0.0-prototype-bundle",
-      "restore_point": "decc4d4a0493fad7cd4dfc20905cbb4c2ccfe621",
-      "description": "Full prototype source archive, Supabase metadata/types, encrypted backup automation"
+      "repository": "lopicotion-coder/olic",
+      "note": "Legacy preserved branch; current prototype archive now lives in private lopicotion-coder/draft"
     }
   ]
 }
