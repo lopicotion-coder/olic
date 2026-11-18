@@ -1007,4 +1007,148 @@ grant execute on function public.worker_finalize_background_ai_operation(text, t
 grant execute on function public.worker_release_background_ai_operation(text)
   to service_role;
 
+
+-- If a provider call succeeded but persisting its response failed, settle the paid
+-- usage as a failed application request and make it terminal (no duplicate retry).
+create or replace function public.worker_fail_ai_request_after_provider(
+  p_request_id uuid, p_budget_id uuid, p_provider_key text, p_model_key text,
+  p_input_tokens integer, p_output_tokens integer, p_billed_amount numeric,
+  p_failure_reason text, p_metadata jsonb default '{}'::jsonb
+)
+returns boolean
+language plpgsql security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  request_row public.ai_requests%rowtype;
+  reservation_row public.ai_budget_reservations%rowtype;
+  budget_row public.ai_budgets%rowtype;
+  spent_amount numeric(14,8);
+  other_reserved numeric(14,8);
+  month_start timestamptz := date_trunc('month', now());
+begin
+  if p_request_id is null or p_budget_id is null or p_provider_key is null or p_model_key is null
+     or p_input_tokens is null or p_input_tokens < 0 or p_output_tokens is null or p_output_tokens < 0
+     or p_billed_amount is null or p_billed_amount < 0 then
+    raise exception 'Invalid failed AI request settlement values';
+  end if;
+  select * into request_row from public.ai_requests where id = p_request_id for update;
+  if not found then raise exception 'AI request not found'; end if;
+  if exists (select 1 from public.ai_budget_events e where e.request_id = p_request_id) then return false; end if;
+  if request_row.status::text <> 'processing' then raise exception 'Only a processing AI request can be failed after provider success'; end if;
+  select * into reservation_row from public.ai_budget_reservations r where r.request_id = p_request_id for update;
+  if not found or reservation_row.budget_id <> p_budget_id then raise exception 'AI budget reservation missing or scope mismatch'; end if;
+  select * into budget_row from public.ai_budgets b where b.id = p_budget_id for update;
+  if not found or not budget_row.is_active then raise exception 'AI budget is no longer active'; end if;
+  if p_input_tokens > budget_row.max_input_tokens or p_output_tokens > budget_row.max_output_tokens then
+    raise exception 'Actual AI token usage exceeds configured limits';
+  end if;
+
+  select coalesce((select sum(e.billed_amount) from public.ai_budget_events e where e.budget_id = p_budget_id and e.created_at >= month_start), 0)
+       + coalesce((select sum(e.billed_amount) from public.ai_background_budget_events e where e.budget_id = p_budget_id and e.created_at >= month_start), 0)
+    into spent_amount;
+  select coalesce((select sum(r.reserved_amount) from public.ai_budget_reservations r where r.budget_id = p_budget_id and r.request_id <> p_request_id and r.expires_at > now()), 0)
+       + coalesce((select sum(r.reserved_amount) from public.ai_background_budget_reservations r where r.budget_id = p_budget_id and r.expires_at > now()), 0)
+    into other_reserved;
+  if p_billed_amount > budget_row.monthly_budget_amount - spent_amount - other_reserved then
+    raise exception 'Actual failed AI usage would exceed the tenant/school monthly budget';
+  end if;
+
+  insert into public.ai_budget_events(
+    request_id, budget_id, tenant_id, school_id, user_id, feature_key,
+    input_tokens, output_tokens, billed_amount, currency, outcome, metadata
+  ) values (
+    p_request_id, p_budget_id, reservation_row.tenant_id, reservation_row.school_id,
+    reservation_row.user_id, request_row.feature_key, p_input_tokens, p_output_tokens,
+    p_billed_amount, budget_row.currency, 'failed',
+    coalesce(p_metadata, '{}'::jsonb) || jsonb_build_object('failure_reason', left(coalesce(p_failure_reason, 'post-provider persistence failure'), 1000))
+  );
+
+  update public.ai_requests
+     set status = 'failed', provider_key = p_provider_key, model_key = p_model_key,
+         tokens_in = p_input_tokens, tokens_out = p_output_tokens, cost_amount = p_billed_amount,
+         completed_at = now(), locked_at = null, locked_by = null,
+         safety_status = 'failed', last_error = left(coalesce(p_failure_reason, 'post-provider persistence failure'), 1000)
+   where id = p_request_id;
+  delete from public.ai_budget_reservations where request_id = p_request_id;
+  return true;
+end;
+$$;
+
+create or replace function public.worker_fail_learner_ai_request_after_provider(
+  p_request_id uuid, p_provider_key text, p_model_key text,
+  p_input_tokens integer, p_output_tokens integer, p_billed_amount numeric,
+  p_failure_reason text, p_metadata jsonb default '{}'::jsonb
+)
+returns boolean
+language plpgsql security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  request_row public.learner_ai_requests%rowtype;
+  reservation_row public.platform_ai_budget_reservations%rowtype;
+  settings_row public.platform_ai_runtime_settings%rowtype;
+  spent_amount numeric(14,8);
+  other_reserved numeric(14,8);
+  month_start timestamptz := date_trunc('month', now());
+begin
+  if p_request_id is null or p_provider_key is null or p_model_key is null
+     or p_input_tokens is null or p_input_tokens < 0 or p_output_tokens is null or p_output_tokens < 0
+     or p_billed_amount is null or p_billed_amount < 0 then
+    raise exception 'Invalid learner AI failure settlement values';
+  end if;
+  select * into request_row from public.learner_ai_requests where id = p_request_id for update;
+  if not found then raise exception 'Learner AI request not found'; end if;
+  if exists (select 1 from public.platform_ai_budget_events e where e.request_id = p_request_id) then return false; end if;
+  if request_row.status <> 'processing' then raise exception 'Only a processing learner AI request can be failed after provider success'; end if;
+  select * into reservation_row from public.platform_ai_budget_reservations r where r.request_id = p_request_id for update;
+  if not found then raise exception 'Platform learner AI reservation not found'; end if;
+  -- Read the current cap/pricing row even when runtime has just been disabled:
+  -- already-incurred provider spend still has to be posted.
+  select * into settings_row from public.platform_ai_runtime_settings s where s.singleton for update;
+  if not found then raise exception 'Platform AI budget settings not found'; end if;
+  if p_provider_key <> settings_row.provider_key or p_model_key <> settings_row.model_key then
+    raise exception 'Learner AI provider route changed before failure settlement';
+  end if;
+  if p_input_tokens > settings_row.max_input_tokens or p_output_tokens > settings_row.max_output_tokens then
+    raise exception 'Actual learner AI token usage exceeds platform limits';
+  end if;
+
+  select coalesce((select sum(e.billed_amount) from public.platform_ai_budget_events e where e.created_at >= month_start), 0)
+       + coalesce((select sum(e.billed_amount) from public.ai_background_budget_events e where e.budget_id is null and e.created_at >= month_start), 0)
+    into spent_amount;
+  select coalesce((select sum(r.reserved_amount) from public.platform_ai_budget_reservations r where r.request_id <> p_request_id and r.expires_at > now()), 0)
+       + coalesce((select sum(r.reserved_amount) from public.ai_background_budget_reservations r where r.budget_id is null and r.expires_at > now()), 0)
+    into other_reserved;
+  if p_billed_amount > settings_row.monthly_budget_amount - spent_amount - other_reserved then
+    raise exception 'Actual failed learner AI usage would exceed the platform monthly budget';
+  end if;
+
+  insert into public.platform_ai_budget_events(
+    request_id, learner_profile_id, requester_user_id, provider_key, model_key,
+    input_tokens, output_tokens, billed_amount, currency, outcome, metadata
+  ) values (
+    p_request_id, request_row.learner_profile_id, request_row.requester_user_id,
+    p_provider_key, p_model_key, p_input_tokens, p_output_tokens, p_billed_amount,
+    settings_row.currency, 'failed',
+    coalesce(p_metadata, '{}'::jsonb) || jsonb_build_object('failure_reason', left(coalesce(p_failure_reason, 'post-provider persistence failure'), 1000))
+  );
+  update public.learner_ai_requests
+     set status = 'failed', completed_at = now(), locked_at = null, locked_by = null,
+         last_error = left(coalesce(p_failure_reason, 'post-provider persistence failure'), 1000), updated_at = now()
+   where id = p_request_id;
+  delete from public.platform_ai_budget_reservations where request_id = p_request_id;
+  return true;
+end;
+$$;
+
+revoke all on function public.worker_fail_ai_request_after_provider(uuid, uuid, text, text, integer, integer, numeric, text, jsonb)
+  from public, anon, authenticated, myschool_runtime;
+revoke all on function public.worker_fail_learner_ai_request_after_provider(uuid, text, text, integer, integer, numeric, text, jsonb)
+  from public, anon, authenticated, myschool_runtime;
+grant execute on function public.worker_fail_ai_request_after_provider(uuid, uuid, text, text, integer, integer, numeric, text, jsonb)
+  to service_role;
+grant execute on function public.worker_fail_learner_ai_request_after_provider(uuid, text, text, integer, integer, numeric, text, jsonb)
+  to service_role;
+
 commit;
