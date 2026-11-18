@@ -523,6 +523,7 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
       continue;
     }
 
+    let finalized = false;
     try {
       const route = await selectRoute(row.tenant_id, row.school_id, row.feature_key);
       const provider = normalizeProvider(route?.provider_key ?? row.provider_key ?? DEFAULT_PROVIDER) ?? DEFAULT_PROVIDER;
@@ -618,10 +619,18 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
         last_error: null,
       }).eq("id", row.id);
       dbError("Complete AI request", completeError);
+      finalized = true;
 
       await archiveQueueMessage("myschool_ai_requests", delivery.msg_id);
       processed += 1;
     } catch (err) {
+      if (finalized) {
+        // The request/response/usage transaction is already committed. A redelivered
+        // message will fail the atomic claim and only archive; never call the provider twice.
+        console.error("AI request completed but queue archive failed", row.id, err);
+        processed += 1;
+        continue;
+      }
       failed += 1;
       const terminal = Number(row.attempts) >= Number(row.max_attempts ?? 3);
       const delayMinutes = retryDelayMinutes(Number(row.attempts) || 1);
