@@ -60,3 +60,12 @@ The 2026-11-18 inspection was read-only against production. No production schema
 - Deno tests and a GitHub Actions check have been added. Local Deno execution was unavailable in the authoring environment; CI verification is pending.
 - New GitHub execution issues #1–#12 track the implementation backlog.
 - This repository is Public; the new source files contain no production credential values. Do not add secrets to Git.
+
+
+## AI runtime budget enforcement — 2026-11-19
+- Added tenant/school budget reservation and atomic settlement to the Worker for standard AI requests.
+- Added a separate platform AI budget for independent learner tutoring; it is disabled by default and does not draw from school budgets.
+- Added explicit USD model pricing and RAG embedding pricing checks. Missing routes/prices/budgets fail closed.
+- Worker now records spend and completes the request in the same database transaction that releases the budget reservation.
+- Added unit-tested budget estimate helpers and included their tests in GitHub Actions.
+- This remains branch-only and is not deployed. Current production snapshot has zero provider routes and zero AI budget rows; only the existing question-generation Cron is active, and Vault has no registered secrets. A protected recurring Worker scheduler remains to be configured before activation.
