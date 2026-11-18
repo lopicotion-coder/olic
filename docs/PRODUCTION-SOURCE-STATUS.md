@@ -1,48 +1,53 @@
-# My School — production source recovery status
+# My School — production source recovery and live status
 
-Snapshot date: 2026-11-17.
+Snapshot date: 2026-11-18.
 
-## Confirmed production database
+## Confirmed production backend
 
-The connected Supabase project matching My School's school/tenant/student/guardian/attendance/finance/communications/support/AI schema is:
-
-- Project ref: `yigixquioguqnpbfhepi`
+- Supabase project ref: `yigixquioguqnpbfhepi`
 - Region: `eu-west-1`
 - PostgreSQL: `17.11.0.018`
 - Status at inspection: `ACTIVE_HEALTHY`
-- Applied migration history: 30 entries
-- Public/app table inventory: 100 entries
-- Storage buckets: 1 private bucket (`school-files`)
-- Deployed Edge Functions observed: 0
+- Public schema tables: 111
+- Applied migration history entries: 40
+- Edge Functions: `ai-gateway` v1 ACTIVE; `ai-worker` v1 ACTIVE. Both currently have platform JWT verification enabled.
+- Installed extensions include `vector` 0.8.2, `pgmq` 1.5.1, `pg_cron`, `pg_net`, `pgcrypto` and `supabase_vault`.
+- pgmq queues: `myschool_curriculum_ingestion`, `myschool_question_generation`, `myschool_embedding`.
+- One active cron job runs every minute and calls `app.enqueue_due_question_generation_schedules(100)`. This job enqueues due question-generation work; it does not itself invoke `ai-worker`.
 
-The separate project `nhkorcyonlvvfnufwycf` is Selsep EDU and must not be merged into My School.
+## Existing AI and curriculum structures
 
-## Confirmed frontend candidates
+The live schema already includes:
+- `curriculum_sources` and `curriculum_source_versions`, including source scope, rights status and permitted-use metadata.
+- `curriculum_chunks` with text, page ranges, metadata, SHA-256 content fingerprint, vector embedding and lexical search vector.
+- `question_bank`, `question_bank_answers`, `question_sources`, student exposure/event and attempt tables.
+- `question_generation_batches`, `question_generation_schedules`, `question_generation_jobs`, `curriculum_ingestion_jobs`, `question_quality_checks` and `ai_rag_evidence`.
 
-A Lovable project named **My School Command Center** was found. Its source is a TanStack Start/React demo with fictional seed data, browser-local state, and a placeholder `src/routes/index.tsx`. It is unpublished and is archived in the private `lopicotion-coder/draft` repository.
+The schema is a foundation, not proof of a complete live RAG workflow. Retrieval, ingestion, embedding generation, citations and question delivery must be exercised with end-to-end tests.
 
-It is not verified as the source that powers the production My School application. Keep it out of this production repository until the owner explicitly identifies it as the intended production frontend and it has been rebuilt, tested, and integrated safely.
+## Important verified gaps
 
-## What is present in this production repository
+- The production frontend source has not been recovered in `lopicotion-coder/olic`.
+- The `draft` repository contains UI prototypes, including a Lovable demo with fictional seed data and a placeholder route. It is not the production application.
+- The original SQL bodies for the 40 applied migrations are not present here; the live migration ledger exposes names and versions.
+- The deployed worker uses a service-role database client, but its request handler does not implement an explicit in-function application-role authorization check before processing privileged jobs.
+- Worker job selection and status update are separate operations; concurrent worker invocations need atomic claiming/leases.
+- The deployed worker does not yet perform real PDF/DOCX extraction into curriculum chunks. Ingestion jobs with missing object paths are deferred/retried.
+- The deployed worker polls job tables directly while pgmq queues also exist. A single queue/claiming strategy must be chosen.
+- The current cron job schedules question-generation jobs but does not trigger the worker.
+- `students` records are currently school/tenant-scoped (`tenant_id` and `school_id` are required). An independent learner needs a separate global identity/profile layer linked to school-owned rosters.
+- A `national_id` text column exists on `students`; audit access and usage before designing a keyed HMAC identity fingerprint or migration.
+- Supabase security advisor: leaked-password protection is disabled.
+- Supabase performance advisor findings include multiple permissive RLS policies, auth init-plan warnings, unused indexes and unindexed foreign keys. Review by impact and query evidence rather than applying broad automated changes.
+- A tested encrypted off-site backup and restore drill has not been confirmed.
 
-- Sanitized project metadata and table/RLS inventory.
-- Exact applied migration version/name ledger.
-- Generated public-schema TypeScript database types.
-- Installed extension and Storage bucket inventory.
-- Storage export/restore scripts.
-- GitHub Actions workflow for encrypted PostgreSQL + Storage backups.
+## Frontend candidates and repository boundaries
 
-## What is still missing
+- Production repository: `lopicotion-coder/olic`.
+- Prototype archive: private `lopicotion-coder/draft`.
+- Separate project `nhkorcyonlvvfnufwycf` is Selsep EDU and must remain separate.
+- The `olic` repository is Public at this snapshot. Never commit secrets, production rows, Auth data, identity values, document contents or backup archives.
 
-1. The actual production frontend/application source.
-2. Original SQL migration bodies for the 30 applied migrations. The connected migration-history API exposed names and versions only.
-3. A tested full database archive and byte-for-byte Storage object archive.
-4. Verification of restore into a separate test project.
-5. Auth provider configuration, SMTP/OAuth configuration, and production secrets (these must be configured outside Git and stored in secret managers).
-6. Final Vercel/Cloudflare deployment configuration and a verified rollback procedure.
+## Safety record
 
-## Safety and scope
-
-The current GitHub repository `olic` is Public. Therefore no production rows, Auth user records, password hashes, Storage object bytes, service-role keys, database passwords, OAuth/SMTP credentials, or plaintext dumps are committed here.
-
-All Supabase operations performed during this inspection were read-only. No production schema, Auth, Storage, user, or billing configuration was changed.
+The 2026-11-18 inspection was read-only against production. No production schema, Auth settings, Storage objects, deployed functions, user data or billing settings were modified during the inspection.
