@@ -51,3 +51,12 @@ The schema is a foundation, not proof of a complete live RAG workflow. Retrieval
 ## Safety record
 
 The 2026-11-18 inspection was read-only against production. No production schema, Auth settings, Storage objects, deployed functions, user data or billing settings were modified during the inspection.
+
+ 
+## Implementation work in progress — 2026-11-18
+- Working branch: `feature/platform-expansion-plan`.
+- The exact deployed source snapshots for `ai-gateway` and `ai-worker` are now checked into `supabase/functions/` on that branch.
+- A proposed `AI_WORKER_INTERNAL_TOKEN` guard is implemented in the branch, in addition to Supabase JWT verification. It has not been deployed. Deployment requires securely provisioning the token and a server-side scheduler caller, then verifying the behavior outside production.
+- Deno tests and a GitHub Actions check have been added. Local Deno execution was unavailable in the authoring environment; CI verification is pending.
+- New GitHub execution issues #1–#12 track the implementation backlog.
+- This repository is Public; the new source files contain no production credential values. Do not add secrets to Git.
