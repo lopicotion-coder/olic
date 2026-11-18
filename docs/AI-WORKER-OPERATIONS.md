@@ -30,5 +30,8 @@ Content-Type: application/json
 {"mode":"all","limit":3}
 ```
 
-## Known follow-up
-Atomic job claiming and pgmq consumption are tracked separately. This auth guard does not by itself solve duplicate concurrent claims or connect the scheduler to the worker.
+## Queue and scheduler state
+
+The feature branch includes atomic job-claim/lease handling, pgmq queue consumption, retries, and the protected `POST /run` endpoint. The current CI validates Deno types and unit tests, but a staging concurrency/duplicate-delivery test is still required.
+
+The ready-to-review operator script is `docs/AI-WORKER-SCHEDULER.sql`. It reads `project_url`, `publishable_key`, and `worker_internal_token` from Vault, then creates a one-minute Cron job that calls `/functions/v1/ai-worker/run` with both gateway and Worker authorization. It must only be executed after branch code is deployed, Edge Function secrets are configured, and staging validation is complete. No production schedule has been created.
