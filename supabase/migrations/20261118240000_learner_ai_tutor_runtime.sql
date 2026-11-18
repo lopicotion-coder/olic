@@ -79,6 +79,24 @@ create table if not exists public.learner_ai_usage (
 create index if not exists learner_ai_usage_profile_period_idx
   on public.learner_ai_usage(learner_profile_id, feature_key, created_at desc);
 
+create table if not exists public.learner_ai_rag_evidence (
+  id uuid primary key default gen_random_uuid(),
+  request_id uuid not null references public.learner_ai_requests(id) on delete cascade,
+  response_id uuid not null references public.learner_ai_responses(id) on delete cascade,
+  learner_profile_id uuid not null references public.learner_profiles(id) on delete cascade,
+  chunk_id uuid not null references public.curriculum_chunks(id) on delete restrict,
+  retrieval_rank integer not null check (retrieval_rank > 0),
+  similarity_score numeric,
+  source_excerpt text not null,
+  citation_label text,
+  selected_for_answer boolean not null default false,
+  created_at timestamptz not null default now(),
+  unique (request_id, chunk_id)
+);
+
+create index if not exists learner_ai_rag_evidence_request_idx
+  on public.learner_ai_rag_evidence(request_id, retrieval_rank);
+
 create or replace function app.worker_has_learner_tutor_entitlement(
   p_learner_profile_id uuid
 )
@@ -410,6 +428,7 @@ $$;
 alter table public.learner_ai_requests enable row level security;
 alter table public.learner_ai_responses enable row level security;
 alter table public.learner_ai_usage enable row level security;
+alter table public.learner_ai_rag_evidence enable row level security;
 
 drop policy if exists learner_ai_requests_read on public.learner_ai_requests;
 create policy learner_ai_requests_read
@@ -421,16 +440,24 @@ create policy learner_ai_responses_read
 on public.learner_ai_responses for select to authenticated, myschool_runtime
 using (app.can_manage_learner_practice(learner_profile_id));
 
+drop policy if exists learner_ai_rag_evidence_read on public.learner_ai_rag_evidence;
+create policy learner_ai_rag_evidence_read
+on public.learner_ai_rag_evidence for select to authenticated, myschool_runtime
+using (app.can_manage_learner_practice(learner_profile_id));
+
 drop policy if exists learner_ai_usage_read on public.learner_ai_usage;
 create policy learner_ai_usage_read
 on public.learner_ai_usage for select to authenticated, myschool_runtime
 using (app.can_manage_learner_practice(learner_profile_id));
 
-revoke all on public.learner_ai_requests, public.learner_ai_responses, public.learner_ai_usage
+revoke all on public.learner_ai_requests, public.learner_ai_responses, public.learner_ai_usage,
+  public.learner_ai_rag_evidence
   from public, anon, authenticated, myschool_runtime;
-grant select on public.learner_ai_requests, public.learner_ai_responses, public.learner_ai_usage
+grant select on public.learner_ai_requests, public.learner_ai_responses, public.learner_ai_usage,
+  public.learner_ai_rag_evidence
   to authenticated, myschool_runtime;
-grant all on public.learner_ai_requests, public.learner_ai_responses, public.learner_ai_usage
+grant all on public.learner_ai_requests, public.learner_ai_responses, public.learner_ai_usage,
+  public.learner_ai_rag_evidence
   to service_role;
 
 revoke all on function public.create_learner_ai_request(uuid, text, text, text, uuid, uuid, jsonb)
