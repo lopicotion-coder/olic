@@ -1417,37 +1417,62 @@ async function processEmbeddingJobs(limit: number): Promise<{ processed: number;
       continue;
     }
 
+    let handedOff = false;
+    let finalized = false;
     try {
-      let items: Array<{ id: string; text: string }> = [];
       const payload = job.payload ?? {};
+      let items: Array<{ id: string; text: string }> = [];
+      let targetIds: string[] = [];
+
       if (job.job_type === "embed_chunks") {
-        const requestedIds = Array.isArray(payload.chunk_ids) ? payload.chunk_ids.map(String) : [];
-        let query = supabase.from("curriculum_chunks").select("id,content_text").is("embedding", null).limit(64);
-        if (requestedIds.length > 0) query = query.in("id", requestedIds);
-        else if (job.source_version_id) query = query.eq("source_version_id", job.source_version_id);
-        else throw new Error("embed_chunks requires source_version_id or payload.chunk_ids");
+        const requestedIds = Array.isArray(payload.chunk_ids) ? [...new Set(payload.chunk_ids.map(String))] : [];
+        let query = supabase
+          .from("curriculum_chunks")
+          .select("id,content_text")
+          .is("embedding", null)
+          .order("chunk_index", { ascending: true })
+          .limit(64);
+        if (requestedIds.length > 0) {
+          query = query.in("id", requestedIds);
+          targetIds = requestedIds;
+        } else if (job.source_version_id) {
+          query = query.eq("source_version_id", job.source_version_id);
+        } else {
+          throw new Error("embed_chunks requires source_version_id or payload.chunk_ids");
+        }
 
         const { data, error } = await query;
         dbError("Load chunks for embedding job", error);
         items = (data ?? []).map((row) => ({ id: row.id, text: row.content_text }));
       } else if (job.job_type === "embed_questions") {
-        const requestedIds = Array.isArray(payload.question_ids) ? payload.question_ids.map(String) : [];
+        const requestedIds = Array.isArray(payload.question_ids) ? [...new Set(payload.question_ids.map(String))] : [];
         let ids = requestedIds;
         if (ids.length === 0 && job.source_version_id) {
           const { data: chunkRows, error: chunkRowsError } = await supabase
-            .from("curriculum_chunks").select("id").eq("source_version_id", job.source_version_id);
+            .from("curriculum_chunks")
+            .select("id")
+            .eq("source_version_id", job.source_version_id);
           dbError("Load source chunks for question embeddings", chunkRowsError);
           const chunkIds = (chunkRows ?? []).map((row) => row.id);
           if (chunkIds.length > 0) {
             const { data: links, error: linksError } = await supabase
-              .from("question_sources").select("question_id").in("chunk_id", chunkIds);
+              .from("question_sources")
+              .select("question_id")
+              .in("chunk_id", chunkIds);
             dbError("Load questions linked to source chunks", linksError);
             ids = [...new Set((links ?? []).map((row) => row.question_id))];
           }
         }
         if (ids.length === 0) throw new Error("embed_questions requires question_ids or source_version_id");
+        targetIds = ids;
+
         const { data, error } = await supabase
-          .from("question_bank").select("id,question_text,choices").in("id", ids).is("embedding", null).limit(64);
+          .from("question_bank")
+          .select("id,question_text,choices")
+          .in("id", ids)
+          .is("embedding", null)
+          .order("created_at", { ascending: true })
+          .limit(64);
         dbError("Load questions for embeddings", error);
         items = (data ?? []).map((row) => ({
           id: row.id,
@@ -1465,24 +1490,70 @@ async function processEmbeddingJobs(limit: number): Promise<{ processed: number;
             embedding: vectorLiteral(vectors[index]),
             embedding_model_key: "openai/text-embedding-3-small",
             updated_at: new Date().toISOString(),
-            ...(table === "curriculum_chunks" ? { embedded_at: new Date().toISOString(), status: "embedded" } : {}),
+            ...(table === "curriculum_chunks"
+              ? { embedded_at: new Date().toISOString(), status: "embedded" }
+              : {}),
           }).eq("id", items[index].id);
           dbError("Save reusable content embedding", updateError);
         }
         embedded += items.length;
       }
 
-      const { error: completeError } = await supabase.from("question_generation_jobs").update({
-        job_status: "completed",
-        last_error: null,
-        locked_at: null,
-        locked_by: null,
-      }).eq("id", job.id);
-      dbError("Complete embedding job", completeError);
+      let pendingCount = 0;
+      if (job.job_type === "embed_chunks") {
+        let remainingQuery = supabase
+          .from("curriculum_chunks")
+          .select("id", { count: "exact", head: true })
+          .is("embedding", null);
+        if (targetIds.length > 0) remainingQuery = remainingQuery.in("id", targetIds);
+        else if (job.source_version_id) remainingQuery = remainingQuery.eq("source_version_id", job.source_version_id);
+        const { count, error } = await remainingQuery;
+        dbError("Count remaining chunk embeddings", error);
+        pendingCount = count ?? 0;
+      } else {
+        let remainingQuery = supabase
+          .from("question_bank")
+          .select("id", { count: "exact", head: true })
+          .is("embedding", null);
+        if (targetIds.length > 0) remainingQuery = remainingQuery.in("id", targetIds);
+        const { count, error } = await remainingQuery;
+        dbError("Count remaining question embeddings", error);
+        pendingCount = count ?? 0;
+      }
+
+      if (pendingCount > 0) {
+        const { error: continueError } = await supabase.from("question_generation_jobs").update({
+          job_status: "retrying",
+          attempts: Math.max(0, Number(job.attempts) - 1),
+          available_at: new Date().toISOString(),
+          last_error: null,
+          locked_at: null,
+          locked_by: null,
+          updated_at: new Date().toISOString(),
+        }).eq("id", job.id);
+        dbError("Queue next embedding batch", continueError);
+        handedOff = true;
+      } else {
+        const { error: completeError } = await supabase.from("question_generation_jobs").update({
+          job_status: "completed",
+          last_error: null,
+          locked_at: null,
+          locked_by: null,
+          updated_at: new Date().toISOString(),
+        }).eq("id", job.id);
+        dbError("Complete embedding job", completeError);
+        finalized = true;
+      }
 
       await archiveQueueMessage("myschool_embedding", delivery.msg_id);
       processed += 1;
     } catch (err) {
+      if (finalized || handedOff) {
+        console.error("Embedding progress committed but queue archive failed", job.id, err);
+        processed += 1;
+        continue;
+      }
+
       failed += 1;
       const terminal = Number(job.attempts) >= Number(job.max_attempts);
       const { error: releaseError } = await supabase.from("question_generation_jobs").update({
@@ -1491,8 +1562,9 @@ async function processEmbeddingJobs(limit: number): Promise<{ processed: number;
         available_at: new Date(Date.now() + retryDelayMinutes(Number(job.attempts)) * 60_000).toISOString(),
         locked_at: null,
         locked_by: null,
+        updated_at: new Date().toISOString(),
       }).eq("id", job.id);
-      dbError("Release embedding job", releaseError);
+      dbError("Release failed embedding job", releaseError);
       await archiveQueueMessage("myschool_embedding", delivery.msg_id);
       console.error("Embedding job failed", job.id, err);
     }
