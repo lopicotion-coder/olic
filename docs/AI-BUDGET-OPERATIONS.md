@@ -67,14 +67,14 @@ For tenant requests, insert the approved `ai_provider_routes` and `ai_budgets` r
 
 ## Worker scheduling and deployment gate
 
-The deployed project currently has a question-generation schedule, but no recurring Worker invocation. It also has no Vault secrets registered for a Vault-backed scheduled caller. Do not schedule the Worker through a public unauthenticated endpoint.
+The deployed project currently has a question-generation schedule, but no recurring Worker invocation. The Vault schema and decrypted-secrets view exist, but no credentials are registered there. Do not schedule the Worker through a public unauthenticated endpoint.
 
 Before enabling background execution:
 1. Set `AI_WORKER_INTERNAL_TOKEN` as a Supabase Edge Function secret and provision the same value to the trusted server-side caller.
 2. Keep `verify_jwt=true` on `ai-worker`; the Worker checks both Supabase JWT and the internal token.
 3. Configure `OPENAI_API_KEY` for embeddings and whichever provider secret matches the platform/tenant routes.
 4. Set `AI_EMBEDDING_PRICE_PER_MILLION`.
-5. Configure a server-side scheduler (Supabase Cron + Vault/pg_net or an external protected scheduler) that calls the Worker with the internal token.
+5. Store `project_url`, `publishable_key`, and `worker_internal_token` in Supabase Vault, then review and run `docs/AI-WORKER-SCHEDULER.sql` after deploying the protected Worker. The script sends both the Supabase gateway key and the independent `x-worker-token`.
 6. Verify in staging that JWT-only calls, missing-token calls, unpriced routes, missing budgets and budget exhaustion are denied; verify successful calls create exactly one spend event.
 
 The Worker must be invoked by a protected scheduler using a valid Supabase JWT and `x-worker-token`. The current production project has no Worker cron entry, and no Vault-backed credentials are installed. A ready-to-review operator script is maintained separately; do not execute it until the Edge Function is deployed and the Vault secrets are populated.
