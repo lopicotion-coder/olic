@@ -27,7 +27,7 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - name: Type-check AI worker
-        run: deno check supabase/functions/ai-worker/index.ts
+      - name: Type-check AI worker and gateway
+        run: deno check supabase/functions/ai-worker/index.ts supabase/functions/ai-gateway/index.ts
       - name: Run worker and parser tests
         run: deno test --no-check supabase/functions/ai-worker/worker-auth.test.ts supabase/functions/ai-worker/document-parser.test.ts
