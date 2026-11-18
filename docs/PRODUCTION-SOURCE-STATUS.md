@@ -97,3 +97,5 @@ Do not interpret these branch changes as deployed production capability. The new
 - Vault snapshot corrected: Vault is installed; scheduler secrets are not registered.
 
 - Added a paid-operation completion callback to all Worker paths (QGen, ingestion/queued embeddings, and tenant/platform RAG). Any downstream error after a billed provider call marks the parent job/request terminal instead of issuing a duplicate paid call.
+
+- Release caveat: a hard Worker process termination after provider success but before settlement remains a distributed failure window; no exactly-once guarantee is claimed, and staging must verify reservation expiry/reconciliation before enabling paid AI.
