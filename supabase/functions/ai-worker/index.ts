@@ -1095,6 +1095,7 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
         continue;
       }
 
+      let parentFinalized = false;
       try {
         if (!["ingest_book", "chunk_book"].includes(parentJob.job_type)) {
           throw new Error(`Unsupported ingestion queue job type: ${parentJob.job_type}`);
@@ -1134,10 +1135,16 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
           locked_by: null,
         }).eq("id", parentJob.id);
         dbError("Complete ingestion parent job", parentCompleteError);
+        parentFinalized = true;
 
         await archiveQueueMessage("myschool_curriculum_ingestion", delivery.msg_id);
         extracted += 1;
       } catch (err) {
+        if (parentFinalized) {
+          console.error("Ingestion parent completed but queue archive failed", parentJob.id, err);
+          extracted += 1;
+          continue;
+        }
         failed += 1;
         const terminal = Number(parentJob.attempts) >= Number(parentJob.max_attempts);
         const { error: releaseError } = await supabase.from("question_generation_jobs").update({
@@ -1166,6 +1173,8 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
       continue;
     }
 
+    let ingestionFinalized = false;
+    let ingestionHandedOff = false;
     try {
       const { data: version, error: versionErr } = await supabase
         .from("curriculum_source_versions")
@@ -1229,8 +1238,6 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
           .upsert(rows, { onConflict: "source_version_id,chunk_index" });
         dbError("Save extracted curriculum chunks", upsertChunksError);
 
-        const { error: removeObjectError } = await supabase.storage.from(bucket).remove([objectPath]);
-        const sourceFileDeleted = !removeObjectError;
         const nextMetadata = {
           ...(version.extraction_metadata ?? {}),
           parser_version: extractedDocument.parserVersion,
@@ -1238,8 +1245,11 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
           chunk_count: rows.length,
           source_file_sha256: fileSha,
           extracted_text_sha256: extractedHash,
-          source_file_deleted: sourceFileDeleted,
-          source_file_delete_error: removeObjectError?.message ?? null,
+          source_file_deleted: false,
+          source_file_delete_pending: true,
+          source_file_delete_error: null,
+          pending_source_bucket: bucket,
+          pending_source_object_path: objectPath,
         };
 
         const { error: updateVersionError } = await supabase.from("curriculum_source_versions").update({
@@ -1248,7 +1258,7 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
           file_sha256: fileSha,
           page_count: extractedDocument.pageCount,
           extraction_metadata: nextMetadata,
-          storage_object_path: sourceFileDeleted ? null : objectPath,
+          storage_object_path: objectPath,
         }).eq("id", version.id);
         dbError("Update extracted curriculum version", updateVersionError);
 
@@ -1256,12 +1266,14 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
           stage: "embed",
           job_status: "retrying",
           available_at: new Date().toISOString(),
+          attempts: Math.max(0, Number(job.attempts) - 1),
           last_error: null,
           locked_at: null,
           locked_by: null,
           updated_at: new Date().toISOString(),
         }).eq("id", job.id);
         dbError("Advance curriculum ingestion to embedding", advanceJobError);
+        ingestionHandedOff = true;
 
         await archiveQueueMessage("myschool_curriculum_ingestion", delivery.msg_id);
         extracted += 1;
@@ -1291,6 +1303,7 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
 
           const { error: retryError } = await supabase.from("curriculum_ingestion_jobs").update({
             job_status: "retrying",
+            attempts: Math.max(0, Number(job.attempts) - 1),
             available_at: new Date().toISOString(),
             locked_at: null,
             locked_by: null,
@@ -1298,6 +1311,7 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
             updated_at: new Date().toISOString(),
           }).eq("id", job.id);
           dbError("Queue remaining embeddings", retryError);
+          ingestionHandedOff = true;
         } else {
           const { count: pendingCount, error: pendingError } = await supabase
             .from("curriculum_chunks")
@@ -1307,28 +1321,60 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
           dbError("Verify curriculum embedding completion", pendingError);
           if ((pendingCount ?? 0) > 0) throw new Error("Curriculum embedding batch is incomplete");
 
+          let sourceFileDeleted = version.storage_object_path === null;
+          let sourceFileDeleteError: string | null = null;
+          if (version.storage_object_path) {
+            const bucket = version.storage_bucket || "school-files";
+            const { error: removeObjectError } = await supabase.storage
+              .from(bucket)
+              .remove([version.storage_object_path]);
+            sourceFileDeleted = !removeObjectError;
+            sourceFileDeleteError = removeObjectError?.message ?? null;
+          }
+
+          const finalMetadata = {
+            ...(version.extraction_metadata ?? {}),
+            source_file_deleted: sourceFileDeleted,
+            source_file_delete_pending: false,
+            source_file_delete_error: sourceFileDeleteError,
+            pending_source_bucket: null,
+            pending_source_object_path: null,
+          };
           const { error: readyError } = await supabase.from("curriculum_source_versions").update({
             ingestion_status: "ready",
+            storage_object_path: sourceFileDeleted ? null : version.storage_object_path,
+            extraction_metadata: finalMetadata,
             updated_at: new Date().toISOString(),
           }).eq("id", version.id);
           dbError("Mark curriculum version ready", readyError);
 
           const { error: completeError } = await supabase.from("curriculum_ingestion_jobs").update({
             job_status: "completed",
-            last_error: null,
+            last_error: sourceFileDeleteError ? `SOURCE_FILE_CLEANUP_REQUIRED: ${sourceFileDeleteError}` : null,
             locked_at: null,
             locked_by: null,
             updated_at: new Date().toISOString(),
           }).eq("id", job.id);
           dbError("Complete curriculum ingestion", completeError);
+          ingestionFinalized = true;
           embedded += 1;
         }
 
+        if (!ingestionHandedOff && !ingestionFinalized) {
+          // The embed stage may have completed without any new chunks (for example,
+          // after recovering a previous partial run); completion is finalized above.
+        }
         await archiveQueueMessage("myschool_curriculum_ingestion", delivery.msg_id);
       } else {
         throw new Error(`Unsupported curriculum ingestion stage: ${job.stage}`);
       }
     } catch (err) {
+      if (ingestionFinalized || ingestionHandedOff) {
+        console.error("Curriculum ingestion progress committed but queue archive failed", job.id, err);
+        if (ingestionFinalized) embedded += 1;
+        else extracted += 1;
+        continue;
+      }
       failed += 1;
       const terminal = Number(job.attempts) >= Number(job.max_attempts);
       const { error: releaseError } = await supabase.from("curriculum_ingestion_jobs").update({
