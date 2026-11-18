@@ -110,6 +110,9 @@ begin
       ) as position
     from public.curriculum_chunks cc
     join permitted_sources ps on ps.id = cc.source_id
+    join public.curriculum_source_versions cv
+      on cv.id = cc.source_version_id
+     and cv.ingestion_status = 'ready'
     where cc.search_vector @@ plainto_tsquery('simple'::regconfig, query_text)
       and (p_source_version_id is null or cc.source_version_id = p_source_version_id)
     order by ts_rank_cd(
@@ -127,6 +130,9 @@ begin
       greatest(0, least(1, 1 - (cc.embedding <=> p_query_embedding)))::numeric as similarity
     from public.curriculum_chunks cc
     join permitted_sources ps on ps.id = cc.source_id
+    join public.curriculum_source_versions cv
+      on cv.id = cc.source_version_id
+     and cv.ingestion_status = 'ready'
     where cc.embedding is not null
       and (p_source_version_id is null or cc.source_version_id = p_source_version_id)
     order by cc.embedding <=> p_query_embedding, cc.id
