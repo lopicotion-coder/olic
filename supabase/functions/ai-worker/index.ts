@@ -357,8 +357,14 @@ function systemPromptForQuestionGeneration(source: CurriculumSourceRow, version:
     `Only use the supplied curriculum excerpts. Do not add outside knowledge.`,
     `Return STRICT JSON only. No markdown, no code fences, no commentary.`,
     `The output must be an object with keys: questions (array), source_version_id, subject_code, grade_code.`,
-    `Each question object should include: question_text, question_type, choices (array or empty array), answer_payload (object or array), explanation, difficulty (1-5), tags (array of strings), grounded_chunk_indexes (array of integers).`,
-    `Generate exactly the number requested by the batch when possible, but prioritize quality.`,
+    `Each question object must include question_text, question_type, choices, answer_payload, explanation, difficulty (integer 1-5), tags (array of strings), and grounded_chunk_indexes (non-empty array of integer indexes from the supplied excerpts).`,
+    `For multiple_choice: choices must be objects [{id:"A",text:"..."},...], with stable short ids; answer_payload must be {"correct_choice_id":"A"} and exactly one id must be correct.`,
+    `For true_false: choices must identify true and false; answer_payload must be {"correct_answer":true} or {"correct_answer":false}.`,
+    `For fill_blank: answer_payload must be {"accepted_answers":["...","..."]} with every acceptable exact answer. Keep answer case/diacritic normalization in mind.`,
+    `For short_answer/essay: answer_payload must be {"reference_answer":"...","rubric":[{"criterion":"...","points":...}]}; these are routed to manual review, not auto-marked.`,
+    `Never put the correct answer in question_text, choices beyond the intended correct choice, tags, or metadata. Do not output an answer key outside answer_payload.`,
+    `grounded_chunk_indexes must point to the exact supplied [#index] chunks supporting both the stem and correct answer; do not invent indexes.`,
+    `Generate exactly the number requested by the batch when possible, but prioritize factual correctness and source grounding.`,
     `Allowed question types: ${allowedTypes}.`,
     `Source title: ${source.title} | Version: ${version.version_label} | Subject: ${source.subject_code}/${source.subject_name} | Grade: ${source.grade_code}/${source.grade_label}`,
     `Curriculum excerpts:\n${chunkGuide}`,
@@ -878,7 +884,14 @@ async function processQuestionGeneration(limit: number): Promise<{ processed: nu
 
         const answerJson = JSON.stringify(answerPayload);
         const fingerprint = await sha256Hex(
-          `${questionText.normalize("NFC").trim()}\n${answerJson}\n${batch.source_version_id}`.toLowerCase(),
+          [
+            source.subject_code,
+            source.grade_code,
+            questionType,
+            questionText.normalize("NFC").trim(),
+            answerJson,
+            batch.source_version_id,
+          ].join("\\n").toLowerCase(),
         );
 
         let existingQuestionQuery = supabase
