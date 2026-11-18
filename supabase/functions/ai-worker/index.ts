@@ -346,6 +346,207 @@ function normalizeProvider(value: unknown): ProviderName | null {
   return null;
 }
 
+
+type BackgroundBudgetScope = {
+  tenantId: string | null;
+  schoolId: string | null;
+  userId?: string | null;
+  featureKey: string;
+  operationKind: string;
+};
+
+async function reserveBackgroundAiOperation(args: {
+  operationKey: string;
+  scope: BackgroundBudgetScope;
+  provider: ProviderName;
+  model: string;
+  estimatedAmount: number;
+  estimatedInputTokens: number;
+  requestedOutputTokens: number;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  const { data, error } = await supabase.rpc("worker_reserve_background_ai_operation", {
+    p_operation_key: args.operationKey,
+    p_tenant_id: args.scope.tenantId,
+    p_school_id: args.scope.schoolId,
+    p_requester_user_id: args.scope.userId ?? null,
+    p_feature_key: args.scope.featureKey,
+    p_operation_kind: args.scope.operationKind,
+    p_provider_key: args.provider,
+    p_model_key: args.model,
+    p_estimated_amount: args.estimatedAmount,
+    p_estimated_input_tokens: args.estimatedInputTokens,
+    p_requested_output_tokens: args.requestedOutputTokens,
+    p_metadata: args.metadata ?? {},
+  });
+  dbError("Reserve background AI operation budget", error);
+  const reservation = firstRow<{ reservation_id: string }>(data);
+  if (!reservation?.reservation_id) throw new Error("BACKGROUND_AI_BUDGET_RESERVATION_FAILED");
+}
+
+async function finalizeBackgroundAiOperation(args: {
+  operationKey: string;
+  provider: ProviderName;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  billedAmount: number;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  const { error } = await supabase.rpc("worker_finalize_background_ai_operation", {
+    p_operation_key: args.operationKey,
+    p_provider_key: args.provider,
+    p_model_key: args.model,
+    p_input_tokens: args.inputTokens,
+    p_output_tokens: args.outputTokens,
+    p_billed_amount: args.billedAmount,
+    p_metadata: args.metadata ?? {},
+  });
+  dbError("Settle background AI operation budget", error);
+}
+
+async function releaseBackgroundAiOperation(operationKey: string): Promise<void> {
+  const { error } = await supabase.rpc("worker_release_background_ai_operation", {
+    p_operation_key: operationKey,
+  });
+  if (error) console.error("Could not release unused background AI reservation", operationKey, error);
+}
+
+async function callProviderWithBackgroundBudget(
+  provider: ProviderName,
+  model: string,
+  messages: GatewayMessage[],
+  maxOutputTokens: number,
+  prices: { inputPricePerMillion: number; outputPricePerMillion: number },
+  scope: BackgroundBudgetScope,
+): Promise<ProviderResponse> {
+  const estimatedInputTokens = estimateInputTokens(messages);
+  const estimatedAmount = estimateUsdCost(estimatedInputTokens, maxOutputTokens, prices);
+  const operationKey = crypto.randomUUID();
+  await reserveBackgroundAiOperation({
+    operationKey, scope, provider, model, estimatedAmount, estimatedInputTokens,
+    requestedOutputTokens: maxOutputTokens,
+    metadata: { phase: "pre-provider-reservation" },
+  });
+
+  let providerCompleted = false;
+  try {
+    const result = await callProvider(provider, model, messages, maxOutputTokens);
+    providerCompleted = true;
+    const inputTokens = result.promptTokens ?? estimatedInputTokens;
+    const outputTokens = result.completionTokens ?? estimateOutputTokens(result.content);
+    const billedAmount = estimateUsdCost(inputTokens, outputTokens, prices);
+    await finalizeBackgroundAiOperation({
+      operationKey, provider, model, inputTokens, outputTokens, billedAmount,
+      metadata: { fallback_usage_estimate: result.promptTokens == null || result.completionTokens == null },
+    });
+    return result;
+  } catch (err) {
+    // If the provider succeeded but settlement failed, keep the reservation until its
+    // expiry rather than silently releasing spend that may already have occurred.
+    if (!providerCompleted) await releaseBackgroundAiOperation(operationKey);
+    throw err;
+  }
+}
+
+async function generateEmbeddingsWithBackgroundBudget(
+  texts: string[],
+  scope: BackgroundBudgetScope,
+): Promise<EmbeddingBatch> {
+  if (!Number.isFinite(EMBEDDING_PRICE_PER_MILLION) || EMBEDDING_PRICE_PER_MILLION <= 0) {
+    throw new Error("AI_EMBEDDING_PRICE_PER_MILLION must be configured before background embeddings can run");
+  }
+  if (texts.length === 0) return { vectors: [], promptTokens: 0 };
+
+  const model = "text-embedding-3-small";
+  const provider: ProviderName = "openai";
+  const messages: GatewayMessage[] = [{ role: "user", content: texts.join("\n") }];
+  const estimatedInputTokens = estimateInputTokens(messages);
+  const prices = {
+    inputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
+    outputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
+  };
+  const estimatedAmount = estimateUsdCost(estimatedInputTokens, 0, prices);
+  const operationKey = crypto.randomUUID();
+
+  const { error: reserveError } = await supabase.rpc("worker_reserve_background_ai_operation", {
+    p_operation_key: operationKey,
+    p_tenant_id: scope.tenantId,
+    p_school_id: scope.schoolId,
+    p_requester_user_id: scope.userId ?? null,
+    p_feature_key: scope.featureKey,
+    p_operation_kind: scope.operationKind,
+    p_provider_key: provider,
+    p_model_key: model,
+    p_estimated_amount: estimatedAmount,
+    p_estimated_input_tokens: estimatedInputTokens,
+    p_requested_output_tokens: 1,
+    p_metadata: { item_count: texts.length },
+  });
+
+  if (reserveError) {
+    const message = String(reserveError.message ?? "");
+    if (message.toLowerCase().includes("token limits") && texts.length > 1) {
+      // Respect tenant/platform input caps by splitting a large embedding batch.
+      const midpoint = Math.ceil(texts.length / 2);
+      const first = await generateEmbeddingsWithBackgroundBudget(texts.slice(0, midpoint), scope);
+      const second = await generateEmbeddingsWithBackgroundBudget(texts.slice(midpoint), scope);
+      return {
+        vectors: [...first.vectors, ...second.vectors],
+        promptTokens: first.promptTokens + second.promptTokens,
+      };
+    }
+    throw reserveError;
+  }
+  const reservation = firstRow<{ reservation_id: string }>(data);
+  if (!reservation?.reservation_id) throw new Error("BACKGROUND_EMBEDDING_BUDGET_RESERVATION_FAILED");
+
+  let providerCompleted = false;
+  try {
+    const batch = await generateEmbeddings(texts);
+    providerCompleted = true;
+    const inputTokens = batch.promptTokens || estimatedInputTokens;
+    const billedAmount = estimateUsdCost(inputTokens, 0, prices);
+    await finalizeBackgroundAiOperation({
+      operationKey, provider, model, inputTokens, outputTokens: 0, billedAmount,
+      metadata: { item_count: texts.length, fallback_usage_estimate: batch.promptTokens <= 0 },
+    });
+    return batch;
+  } catch (err) {
+    if (!providerCompleted) await releaseBackgroundAiOperation(operationKey);
+    throw err;
+  }
+}
+
+async function loadCurriculumBudgetScope(
+  sourceVersionId: string,
+  featureKey: string,
+  operationKind: string,
+): Promise<BackgroundBudgetScope> {
+  const { data: version, error: versionError } = await supabase
+    .from("curriculum_source_versions")
+    .select("source_id")
+    .eq("id", sourceVersionId)
+    .single();
+  dbError("Load curriculum source owner for AI budget", versionError);
+  if (!version?.source_id) throw new Error("CURRICULUM_BUDGET_SOURCE_NOT_FOUND");
+
+  const { data: source, error: sourceError } = await supabase
+    .from("curriculum_sources")
+    .select("tenant_id,school_id,created_by")
+    .eq("id", version.source_id)
+    .single();
+  dbError("Load curriculum source budget scope", sourceError);
+  if (!source) throw new Error("CURRICULUM_BUDGET_SCOPE_NOT_FOUND");
+  return {
+    tenantId: source.tenant_id ?? null,
+    schoolId: source.school_id ?? null,
+    userId: source.created_by ?? null,
+    featureKey,
+    operationKind,
+  };
+}
+
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
@@ -494,7 +695,13 @@ async function retrieveTutorEvidence(row: AiRequestRow): Promise<{ evidence: Cur
   const gradeCode = typeof context.grade_code === "string" ? context.grade_code : null;
   const sourceVersionId = typeof context.source_version_id === "string" ? context.source_version_id : null;
 
-  const embeddingBatch = await generateEmbeddings([row.prompt_text]);
+  const embeddingBatch = await generateEmbeddingsWithBackgroundBudget([row.prompt_text], {
+    tenantId: row.tenant_id,
+    schoolId: row.school_id,
+    userId: row.requester_user_id,
+    featureKey: "tutor",
+    operationKind: "tenant_rag_query_embedding",
+  });
   const queryEmbedding = embeddingBatch.vectors[0];
   const { data, error } = await supabase.rpc("search_curriculum_hybrid", {
     p_query_text: row.prompt_text,
@@ -600,7 +807,13 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
       if (!Number.isFinite(EMBEDDING_PRICE_PER_MILLION) || EMBEDDING_PRICE_PER_MILLION <= 0) {
         throw new Error("AI_EMBEDDING_PRICE_PER_MILLION must be configured before learner RAG requests can run");
       }
-      const queryEmbeddingBatch = await generateEmbeddings([row.prompt_text]);
+      const queryEmbeddingBatch = await generateEmbeddingsWithBackgroundBudget([row.prompt_text], {
+        tenantId: null,
+        schoolId: null,
+        userId: row.requester_user_id,
+        featureKey: "tutor",
+        operationKind: "learner_rag_query_embedding",
+      });
       const queryEmbedding = queryEmbeddingBatch.vectors[0];
       const { data: evidenceData, error: evidenceError } = await supabase.rpc("search_curriculum_hybrid", {
         p_query_text: row.prompt_text,
@@ -623,9 +836,6 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
       const estimatedCost = estimateUsdCost(estimatedInputTokens, maxOutputTokens, {
         inputPricePerMillion: Number(runtime.input_price_per_million),
         outputPricePerMillion: Number(runtime.output_price_per_million),
-      }) + estimateUsdCost(queryEmbeddingBatch.promptTokens, 0, {
-        inputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
-        outputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
       });
 
       const { data: reservationData, error: reservationError } = await supabase.rpc(
@@ -650,9 +860,6 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
       const cost = estimateUsdCost(inputTokens, outputTokens, {
         inputPricePerMillion: Number(runtime.input_price_per_million),
         outputPricePerMillion: Number(runtime.output_price_per_million),
-      }) + estimateUsdCost(queryEmbeddingBatch.promptTokens, 0, {
-        inputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
-        outputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
       });
 
       const { data: savedResponse, error: responseError } = await supabase
@@ -807,12 +1014,7 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
       const estimatedCost = estimateUsdCost(estimatedInputTokens, maxOutputTokens, {
         inputPricePerMillion: Number(route.input_price_per_million),
         outputPricePerMillion: Number(route.output_price_per_million),
-      }) + (tutorEvidence.embeddingTokens > 0
-        ? estimateUsdCost(tutorEvidence.embeddingTokens, 0, {
-            inputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
-            outputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
-          })
-        : 0);
+      });
 
       const { data: reservationData, error: reservationError } = await supabase.rpc("worker_reserve_ai_budget", {
         p_request_id: row.id,
@@ -837,12 +1039,7 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
       const cost = estimateUsdCost(inputTokens, outputTokens, {
         inputPricePerMillion: Number(route.input_price_per_million),
         outputPricePerMillion: Number(route.output_price_per_million),
-      }) + (tutorEvidence.embeddingTokens > 0
-        ? estimateUsdCost(tutorEvidence.embeddingTokens, 0, {
-            inputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
-            outputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
-          })
-        : 0);
+      });
 
       const { data: savedResponse, error: responseError } = await supabase.from("ai_responses").upsert({
         request_id: row.id,
@@ -1045,13 +1242,18 @@ async function processQuestionGeneration(limit: number): Promise<{ processed: nu
       }
 
       const route = await selectRoute(batch.tenant_id, batch.school_id, "exam_generator");
-      const provider = normalizeProvider(route?.provider_key ?? batch.provider_key ?? DEFAULT_PROVIDER) ?? DEFAULT_PROVIDER;
-      const model = route?.model_key ?? batch.model_key ?? (
-        provider === "openrouter" ? DEFAULT_MODEL_OPENROUTER :
-        provider === "openai" ? DEFAULT_MODEL_OPENAI :
-        provider === "gemini" ? DEFAULT_MODEL_GEMINI : DEFAULT_MODEL_XAI
-      );
-      const maxOutputTokens = Math.min(8192, Math.max(512, route?.max_output_tokens ?? 4096));
+      if (!route) throw new Error("QUESTION_GENERATION_PROVIDER_ROUTE_NOT_CONFIGURED");
+      const provider = normalizeProvider(route.provider_key);
+      if (!provider || !route.model_key ||
+          Number(route.input_price_per_million) <= 0 ||
+          Number(route.output_price_per_million) <= 0) {
+        throw new Error("QUESTION_GENERATION_PROVIDER_ROUTE_PRICING_INVALID");
+      }
+      const model = route.model_key;
+      const maxOutputTokens = Math.min(8192, Number(route.max_output_tokens));
+      if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1) {
+        throw new Error("QUESTION_GENERATION_OUTPUT_TOKEN_LIMIT_INVALID");
+      }
 
       let jobResult: {
         questions: unknown[];
@@ -1091,10 +1293,19 @@ async function processQuestionGeneration(limit: number): Promise<{ processed: nu
           chunks as CurriculumChunkRow[],
           batch as QuestionBatchRow,
         );
-        const response = await callProvider(provider, model, [
+        const response = await callProviderWithBackgroundBudget(provider, model, [
           { role: "system", content: prompt },
           { role: "user", content: `Generate exactly ${batch.requested_count} questions grounded only in these approved chunks. Every question must include non-empty grounded_chunk_indexes.` },
-        ], maxOutputTokens);
+        ], maxOutputTokens, {
+          inputPricePerMillion: Number(route.input_price_per_million),
+          outputPricePerMillion: Number(route.output_price_per_million),
+        }, {
+          tenantId: batch.tenant_id,
+          schoolId: batch.school_id,
+          userId: source.created_by ?? null,
+          featureKey: "exam_generator",
+          operationKind: "question_generation",
+        });
         const parsed = parseQuestionPayload(response.content);
         const responseHash = await sha256Hex(response.content);
 
@@ -1593,7 +1804,15 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
         dbError("Load chunks for embedding", chunksError);
 
         if (chunks && chunks.length > 0) {
-          const embeddingBatch = await generateEmbeddings(chunks.map((chunk) => chunk.content_text));
+          const budgetScope = await loadCurriculumBudgetScope(
+            version.id,
+            "document_understanding",
+            "curriculum_ingestion_embedding",
+          );
+          const embeddingBatch = await generateEmbeddingsWithBackgroundBudget(
+            chunks.map((chunk) => chunk.content_text),
+            budgetScope,
+          );
           const vectors = embeddingBatch.vectors;
           for (let index = 0; index < chunks.length; index += 1) {
             const { error: embeddingUpdateError } = await supabase.from("curriculum_chunks").update({
@@ -1729,12 +1948,13 @@ async function processEmbeddingJobs(limit: number): Promise<{ processed: number;
       const payload = job.payload ?? {};
       let items: Array<{ id: string; text: string }> = [];
       let targetIds: string[] = [];
+      let embeddingBudgetScope: BackgroundBudgetScope | null = null;
 
       if (job.job_type === "embed_chunks") {
         const requestedIds = Array.isArray(payload.chunk_ids) ? [...new Set(payload.chunk_ids.map(String))] : [];
         let query = supabase
           .from("curriculum_chunks")
-          .select("id,content_text")
+          .select("id,content_text,source_version_id")
           .is("embedding", null)
           .order("chunk_index", { ascending: true })
           .limit(64);
@@ -1750,6 +1970,17 @@ async function processEmbeddingJobs(limit: number): Promise<{ processed: number;
         const { data, error } = await query;
         dbError("Load chunks for embedding job", error);
         items = (data ?? []).map((row) => ({ id: row.id, text: row.content_text }));
+        if (items.length > 0) {
+          const sourceVersionIds = [...new Set((data ?? []).map((row) => row.source_version_id))];
+          if (sourceVersionIds.length !== 1) {
+            throw new Error("An embedding batch must belong to one curriculum source version");
+          }
+          embeddingBudgetScope = await loadCurriculumBudgetScope(
+            sourceVersionIds[0],
+            "document_understanding",
+            "queued_curriculum_embedding",
+          );
+        }
       } else if (job.job_type === "embed_questions") {
         const requestedIds = Array.isArray(payload.question_ids) ? [...new Set(payload.question_ids.map(String))] : [];
         let ids = requestedIds;
@@ -1774,7 +2005,7 @@ async function processEmbeddingJobs(limit: number): Promise<{ processed: number;
 
         const { data, error } = await supabase
           .from("question_bank")
-          .select("id,question_text,choices")
+          .select("id,question_text,choices,tenant_id,school_id,created_by")
           .in("id", ids)
           .is("embedding", null)
           .order("created_at", { ascending: true })
@@ -1784,12 +2015,30 @@ async function processEmbeddingJobs(limit: number): Promise<{ processed: number;
           id: row.id,
           text: [row.question_text, JSON.stringify(row.choices ?? [])].join("\n"),
         }));
+        if (items.length > 0) {
+          const first = data![0];
+          const mixedScope = (data ?? []).some((row) =>
+            row.tenant_id !== first.tenant_id || row.school_id !== first.school_id
+          );
+          if (mixedScope) throw new Error("An embedding batch cannot mix tenant/school question scopes");
+          embeddingBudgetScope = {
+            tenantId: first.tenant_id ?? null,
+            schoolId: first.school_id ?? null,
+            userId: first.created_by ?? null,
+            featureKey: "exam_generator",
+            operationKind: "reusable_question_embedding",
+          };
+        }
       } else {
         throw new Error(`Unsupported embedding job type: ${job.job_type}`);
       }
 
       if (items.length > 0) {
-        const embeddingBatch = await generateEmbeddings(items.map((item) => item.text));
+        if (!embeddingBudgetScope) throw new Error("EMBEDDING_BUDGET_SCOPE_NOT_AVAILABLE");
+        const embeddingBatch = await generateEmbeddingsWithBackgroundBudget(
+          items.map((item) => item.text),
+          embeddingBudgetScope,
+        );
         const vectors = embeddingBatch.vectors;
         const table = job.job_type === "embed_chunks" ? "curriculum_chunks" : "question_bank";
         for (let index = 0; index < items.length; index += 1) {
