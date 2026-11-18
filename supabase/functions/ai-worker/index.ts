@@ -412,6 +412,10 @@ async function releaseBackgroundAiOperation(operationKey: string): Promise<void>
   if (error) console.error("Could not release unused background AI reservation", operationKey, error);
 }
 
+function isUnsettledPaidProviderError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("BACKGROUND_AI_SETTLEMENT_UNAVAILABLE_AFTER_PROVIDER_SUCCESS:");
+}
+
 async function callProviderWithBackgroundBudget(
   provider: ProviderName,
   model: string,
@@ -430,10 +434,12 @@ async function callProviderWithBackgroundBudget(
   });
 
   let providerCompleted = false;
+  let providerResult: ProviderResponse | null = null;
   let providerSettlement: { inputTokens: number; outputTokens: number; billedAmount: number } | null = null;
   try {
-    const result = await callProvider(provider, model, messages, maxOutputTokens);
+    providerResult = await callProvider(provider, model, messages, maxOutputTokens);
     providerCompleted = true;
+    const result = providerResult;
     const inputTokens = result.promptTokens ?? estimatedInputTokens;
     const outputTokens = result.completionTokens ?? estimateOutputTokens(result.content);
     const billedAmount = estimateUsdCost(inputTokens, outputTokens, prices);
@@ -459,7 +465,14 @@ async function callProviderWithBackgroundBudget(
       });
       if (failedSettlementError) {
         console.error("CRITICAL: provider succeeded but background AI spend settlement failed", operationKey, failedSettlementError);
+        throw new Error(`BACKGROUND_AI_SETTLEMENT_UNAVAILABLE_AFTER_PROVIDER_SUCCESS:${operationKey}`);
       }
+      // The fallback RPC recorded the actual successful provider call; retain and
+      // return the response so the parent job can persist it without another charge.
+      if (providerResult) return providerResult;
+    } else if (providerCompleted) {
+      console.error("CRITICAL: provider succeeded but usage could not be estimated", operationKey, err);
+      throw new Error(`BACKGROUND_AI_SETTLEMENT_UNAVAILABLE_AFTER_PROVIDER_SUCCESS:${operationKey}`);
     }
     throw err;
   }
@@ -518,10 +531,12 @@ async function generateEmbeddingsWithBackgroundBudget(
   if (!reservation?.reservation_id) throw new Error("BACKGROUND_EMBEDDING_BUDGET_RESERVATION_FAILED");
 
   let providerCompleted = false;
+  let embeddingResult: EmbeddingBatch | null = null;
   let providerSettlement: { inputTokens: number; billedAmount: number } | null = null;
   try {
-    const batch = await generateEmbeddings(texts);
+    embeddingResult = await generateEmbeddings(texts);
     providerCompleted = true;
+    const batch = embeddingResult;
     const inputTokens = batch.promptTokens || estimatedInputTokens;
     const billedAmount = estimateUsdCost(inputTokens, 0, prices);
     providerSettlement = { inputTokens, billedAmount };
@@ -546,7 +561,12 @@ async function generateEmbeddingsWithBackgroundBudget(
       });
       if (failedSettlementError) {
         console.error("CRITICAL: provider succeeded but embedding spend settlement failed", operationKey, failedSettlementError);
+        throw new Error(`BACKGROUND_AI_SETTLEMENT_UNAVAILABLE_AFTER_PROVIDER_SUCCESS:${operationKey}`);
       }
+      if (embeddingResult) return embeddingResult;
+    } else if (providerCompleted) {
+      console.error("CRITICAL: provider succeeded but embedding usage could not be estimated", operationKey, err);
+      throw new Error(`BACKGROUND_AI_SETTLEMENT_UNAVAILABLE_AFTER_PROVIDER_SUCCESS:${operationKey}`);
     }
     throw err;
   }
@@ -1635,7 +1655,7 @@ async function processQuestionGeneration(limit: number): Promise<{ processed: nu
       }
 
       failed += 1;
-      const terminal = Number(job.attempts) >= Number(job.max_attempts);
+      const terminal = isUnsettledPaidProviderError(err) || Number(job.attempts) >= Number(job.max_attempts);
       const { error: releaseError } = await supabase.from("question_generation_jobs").update({
         job_status: terminal ? "failed" : "retrying",
         last_error: err instanceof Error ? err.message.slice(0, 1000) : "Question generation failed",
@@ -1964,7 +1984,7 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
         continue;
       }
       failed += 1;
-      const terminal = Number(job.attempts) >= Number(job.max_attempts);
+      const terminal = isUnsettledPaidProviderError(err) || Number(job.attempts) >= Number(job.max_attempts);
       const { error: releaseError } = await supabase.from("curriculum_ingestion_jobs").update({
         job_status: terminal ? "failed" : "retrying",
         last_error: err instanceof Error ? err.message.slice(0, 1000) : "Curriculum ingestion failed",
@@ -2174,7 +2194,7 @@ async function processEmbeddingJobs(limit: number): Promise<{ processed: number;
       }
 
       failed += 1;
-      const terminal = Number(job.attempts) >= Number(job.max_attempts);
+      const terminal = isUnsettledPaidProviderError(err) || Number(job.attempts) >= Number(job.max_attempts);
       const { error: releaseError } = await supabase.from("question_generation_jobs").update({
         job_status: terminal ? "failed" : "retrying",
         last_error: err instanceof Error ? err.message.slice(0, 1000) : "Embedding failed",
