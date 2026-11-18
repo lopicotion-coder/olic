@@ -22,6 +22,8 @@ type AiRequestRow = {
   tokens_out: number;
   cost_amount: number;
   created_at: string;
+  attempts: number;
+  max_attempts: number;
 };
 
 type ProviderRouteRow = {
@@ -35,7 +37,6 @@ type ProviderRouteRow = {
   priority: number;
   timeout_ms: number;
   max_output_tokens: number;
-  timeout_ms: number;
   input_price_per_million: number;
   output_price_per_million: number;
 };
@@ -200,7 +201,15 @@ async function claimIngestionJob(id: string, workerId: string): Promise<{
     p_worker_id: workerId,
   });
   dbError("Claim curriculum ingestion job", error);
-  return firstRow(data);
+  return firstRow<{
+    id: string;
+    source_version_id: string;
+    job_status: string;
+    stage: string;
+    attempts: number;
+    max_attempts: number;
+    metadata: Record<string, unknown>;
+  }>(data);
 }
 
 function retryDelayMinutes(attempts: number): number {
@@ -510,7 +519,7 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
       processed += 1;
     } catch (err) {
       failed += 1;
-      const terminal = Number(row.attempts) >= Number((row as unknown as { max_attempts?: number }).max_attempts ?? 3);
+      const terminal = Number(row.attempts) >= Number(row.max_attempts ?? 3);
       const delayMinutes = retryDelayMinutes(Number(row.attempts) || 1);
       const { error: retryError } = await supabase.from("ai_requests").update({
         status: terminal ? "failed" : "queued",
