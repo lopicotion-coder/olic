@@ -1,7 +1,9 @@
+import { hasValidGatewayToken } from "./gateway-auth.ts";
+
 type ProviderName = "openrouter" | "openai" | "gemini" | "xai";
 
 type ChatMessage = {
-  role: "system" | "user" | "assistant" | "tool";
+  role: "system" | "user" | "assistant";
   content: unknown;
 };
 
@@ -24,12 +26,23 @@ const DEFAULTS: Record<ProviderName, string> = {
   xai: Deno.env.get("AI_GATEWAY_DEFAULT_MODEL_XAI") ?? "grok-4.7",
 };
 
+const GATEWAY_INTERNAL_TOKEN = Deno.env.get("AI_GATEWAY_INTERNAL_TOKEN") ?? "";
+const MAX_REQUEST_BYTES = 256 * 1024;
+const MAX_OUTPUT_TOKENS = Math.max(
+  128,
+  Math.min(8192, Number(Deno.env.get("AI_GATEWAY_MAX_OUTPUT_TOKENS") ?? "2048") || 2048),
+);
+
+function allowedModels(provider: ProviderName): Set<string> {
+  const envName = `AI_GATEWAY_ALLOWED_MODELS_${provider.toUpperCase()}`;
+  const configured = Deno.env.get(envName) ?? DEFAULTS[provider];
+  return new Set(configured.split(",").map((value) => value.trim()).filter(Boolean));
+}
+
 function json(data: unknown, init?: ResponseInit): Response {
   const headers = new Headers(init?.headers);
   headers.set("content-type", "application/json; charset=utf-8");
-  headers.set("access-control-allow-origin", "*");
-  headers.set("access-control-allow-headers", "authorization, content-type, x-request-id");
-  headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
+  headers.set("cache-control", "no-store");
   return new Response(JSON.stringify(data), { ...init, headers });
 }
 
@@ -152,12 +165,9 @@ async function routeOpenAICompatible(provider: ProviderName, body: GatewayReques
   }
 
   if (!upstream.ok) {
+    console.error("AI provider request failed", { provider, status: upstream.status });
     return json(
-      {
-        error: `Upstream ${provider} request failed`,
-        status: upstream.status,
-        details: raw,
-      },
+      { error: `Upstream ${provider} request failed`, status: upstream.status },
       { status: 502 },
     );
   }
@@ -200,7 +210,8 @@ async function routeGemini(body: GatewayRequest): Promise<Response> {
   }
 
   if (!upstream.ok) {
-    return json({ error: "Upstream gemini request failed", status: upstream.status, details: raw }, { status: 502 });
+    console.error("Gemini provider request failed", { status: upstream.status });
+    return json({ error: "Upstream gemini request failed", status: upstream.status }, { status: 502 });
   }
 
   const responseText =
@@ -217,42 +228,119 @@ async function routeGemini(body: GatewayRequest): Promise<Response> {
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return json({ ok: true }, { status: 204 });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204 });
+
+  const url = new URL(req.url);
   if (req.method === "GET") {
-    const url = new URL(req.url);
     if (url.pathname === "/health" || url.pathname === "/") {
-      return json({ ok: true, service: "ai-gateway", providers: ["openrouter", "openai", "gemini", "xai"] });
+      return json({ ok: true, service: "ai-gateway" });
     }
     return json({ error: "Not found" }, { status: 404 });
   }
-  if (req.method !== "POST") return json({ error: "Method not allowed" }, { status: 405 });
 
-  const url = new URL(req.url);
-  if (!(url.pathname === "/" || url.pathname === "/v1/chat/completions")) {
-    return json({ error: "Not found" }, { status: 404 });
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, { status: 405 });
+  if (url.pathname !== "/v1/chat/completions") return json({ error: "Not found" }, { status: 404 });
+
+  if (!GATEWAY_INTERNAL_TOKEN) {
+    return json({ error: "AI gateway is not configured for internal use" }, { status: 503 });
+  }
+  if (!(await hasValidGatewayToken(req, GATEWAY_INTERNAL_TOKEN))) {
+    return json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = (await req.json().catch(() => null)) as GatewayRequest | null;
-  if (!body) return json({ error: "Invalid JSON body" }, { status: 400 });
-  if (body.stream) {
+  const contentLength = Number(req.headers.get("content-length") ?? "0");
+  if (contentLength > MAX_REQUEST_BYTES) return json({ error: "Request body too large" }, { status: 413 });
+
+  const rawBody = await req.text();
+  if (new TextEncoder().encode(rawBody).byteLength > MAX_REQUEST_BYTES) {
+    return json({ error: "Request body too large" }, { status: 413 });
+  }
+
+  let body: GatewayRequest;
+  try {
+    body = JSON.parse(rawBody) as GatewayRequest;
+  } catch {
+    return json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ error: "Invalid request body" }, { status: 400 });
+  }
+  if (body.stream === true) {
     return json({ error: "Streaming is not enabled in ai-gateway v1" }, { status: 400 });
   }
-  if (!Array.isArray(body.messages) || body.messages.length === 0) {
-    return json({ error: "`messages` must be a non-empty array" }, { status: 400 });
+
+  const provider = normalizeProvider(body.provider);
+  if (!provider) return json({ error: "A supported provider is required" }, { status: 400 });
+
+  const model = String(body.model ?? DEFAULTS[provider]).trim();
+  if (!model || model.length > 160 || !allowedModels(provider).has(model)) {
+    return json({ error: "Requested model is not in the configured allowlist" }, { status: 403 });
   }
 
-  const provider = normalizeProvider(body.provider) ?? "openrouter";
+  if (!Array.isArray(body.messages) || body.messages.length < 1 || body.messages.length > 40) {
+    return json({ error: "messages must contain between 1 and 40 items" }, { status: 400 });
+  }
+
+  let totalCharacters = 0;
+  const validatedMessages: ChatMessage[] = [];
+  for (const message of body.messages) {
+    if (!message || typeof message !== "object" || Array.isArray(message)) {
+      return json({ error: "Invalid chat message" }, { status: 400 });
+    }
+    if (!["system", "user", "assistant"].includes(message.role)) {
+      return json({ error: "Unsupported chat message role" }, { status: 400 });
+    }
+    const content = textFromContent(message.content);
+    if (!content || content.length > 48_000) {
+      return json({ error: "Chat message content is empty or too large" }, { status: 400 });
+    }
+    totalCharacters += content.length;
+    validatedMessages.push({ role: message.role, content });
+  }
+
+  if (totalCharacters > 160_000) return json({ error: "Total prompt content is too large" }, { status: 413 });
+
+  const temperature = body.temperature ?? 0.2;
+  const topP = body.top_p ?? 1;
+  const maxTokens = body.max_tokens ?? Math.min(1024, MAX_OUTPUT_TOKENS);
+  if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
+    return json({ error: "temperature must be between 0 and 2" }, { status: 400 });
+  }
+  if (!Number.isFinite(topP) || topP <= 0 || topP > 1) {
+    return json({ error: "top_p must be greater than 0 and no more than 1" }, { status: 400 });
+  }
+  if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_OUTPUT_TOKENS) {
+    return json({ error: `max_tokens must be between 1 and ${MAX_OUTPUT_TOKENS}` }, { status: 400 });
+  }
+
+  const stop = body.stop;
+  if (
+    stop !== undefined &&
+    !(
+      (typeof stop === "string" && stop.length <= 200)
+      || (Array.isArray(stop) && stop.length <= 4 && stop.every((item) => typeof item === "string" && item.length <= 200))
+    )
+  ) {
+    return json({ error: "stop must be a string or an array of up to four short strings" }, { status: 400 });
+  }
+
+  const normalizedBody: GatewayRequest = {
+    provider,
+    model,
+    messages: validatedMessages,
+    temperature,
+    top_p: topP,
+    max_tokens: maxTokens,
+    stop,
+    stream: false,
+  };
 
   try {
-    if (provider === "gemini") return await routeGemini(body);
-    return await routeOpenAICompatible(provider, body);
+    if (provider === "gemini") return await routeGemini(normalizedBody);
+    return await routeOpenAICompatible(provider, normalizedBody);
   } catch (err) {
-    return json(
-      {
-        error: "AI gateway execution failed",
-        message: err instanceof Error ? err.message : String(err),
-      },
-      { status: 500 },
-    );
+    console.error("AI gateway execution failed", err);
+    return json({ error: "AI gateway execution failed" }, { status: 500 });
   }
 });
