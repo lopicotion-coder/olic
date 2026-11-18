@@ -1,5 +1,5 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert@1";
-import { estimateInputTokens, estimateUsdCost } from "./budget-math.ts";
+import { estimateInputTokens, estimateOutputTokens, estimateUsdCost } from "./budget-math.ts";
 
 Deno.test("input estimate includes conservative allowance for Arabic prompts", () => {
   const estimate = estimateInputTokens([
@@ -29,4 +29,9 @@ Deno.test("rejects invalid token counts", () => {
     inputPricePerMillion: 1,
     outputPricePerMillion: 1,
   }), Error);
+});
+
+Deno.test("output token fallback safely estimates non-empty provider output", () => {
+  assertEquals(estimateOutputTokens("123456"), 2);
+  assertEquals(estimateOutputTokens(""), 0);
 });
