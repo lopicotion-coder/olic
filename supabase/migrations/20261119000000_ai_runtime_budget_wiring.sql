@@ -92,28 +92,39 @@ begin
     return;
   end if;
 
-  select count(*) into request_count
-    from public.ai_requests r
-   where r.tenant_id = p_tenant_id
-     and r.school_id is not distinct from p_school_id
-     and r.feature_key = p_feature_key
-     and r.created_at >= month_start;
+  -- One shared monthly limit covers interactive AI and background work.
+  select
+    (select count(*) from public.ai_requests r
+      where r.tenant_id = p_tenant_id
+        and (budget_row.school_id is null or r.school_id is not distinct from budget_row.school_id)
+        and r.created_at >= month_start)
+    +
+    (select count(*) from public.ai_background_budget_events e
+      where e.budget_id = budget_row.id and e.created_at >= month_start)
+    +
+    (select count(*) from public.ai_background_budget_reservations r
+      where r.budget_id = budget_row.id and r.expires_at > now())
+    into request_count;
 
   if request_count > budget_row.monthly_request_limit then
     raise exception 'The monthly AI request limit has been exceeded';
   end if;
 
-  select coalesce(sum(e.billed_amount), 0)
-    into spent_amount
-    from public.ai_budget_events e
-   where e.budget_id = budget_row.id
-     and e.created_at >= month_start;
+  select
+    coalesce((select sum(e.billed_amount) from public.ai_budget_events e
+      where e.budget_id = budget_row.id and e.created_at >= month_start), 0)
+    +
+    coalesce((select sum(e.billed_amount) from public.ai_background_budget_events e
+      where e.budget_id = budget_row.id and e.created_at >= month_start), 0)
+    into spent_amount;
 
-  select coalesce(sum(r.reserved_amount), 0)
-    into reserved_amount
-    from public.ai_budget_reservations r
-   where r.budget_id = budget_row.id
-     and r.expires_at > now();
+  select
+    coalesce((select sum(r.reserved_amount) from public.ai_budget_reservations r
+      where r.budget_id = budget_row.id and r.expires_at > now()), 0)
+    +
+    coalesce((select sum(r.reserved_amount) from public.ai_background_budget_reservations r
+      where r.budget_id = budget_row.id and r.expires_at > now()), 0)
+    into reserved_amount;
 
   estimate := p_estimated_amount;
   if estimate > budget_row.monthly_budget_amount - spent_amount - reserved_amount then
@@ -201,18 +212,21 @@ begin
     raise exception 'Actual token usage exceeds the configured AI budget limits';
   end if;
 
-  select coalesce(sum(e.billed_amount), 0)
-    into spent_amount
-    from public.ai_budget_events e
-   where e.budget_id = p_budget_id
-     and e.created_at >= month_start;
+  select
+    coalesce((select sum(e.billed_amount) from public.ai_budget_events e
+      where e.budget_id = p_budget_id and e.created_at >= month_start), 0)
+    +
+    coalesce((select sum(e.billed_amount) from public.ai_background_budget_events e
+      where e.budget_id = p_budget_id and e.created_at >= month_start), 0)
+    into spent_amount;
 
-  select coalesce(sum(r.reserved_amount), 0)
-    into other_reserved
-    from public.ai_budget_reservations r
-   where r.budget_id = p_budget_id
-     and r.request_id <> p_request_id
-     and r.expires_at > now();
+  select
+    coalesce((select sum(r.reserved_amount) from public.ai_budget_reservations r
+      where r.budget_id = p_budget_id and r.request_id <> p_request_id and r.expires_at > now()), 0)
+    +
+    coalesce((select sum(r.reserved_amount) from public.ai_background_budget_reservations r
+      where r.budget_id = p_budget_id and r.expires_at > now()), 0)
+    into other_reserved;
 
   if p_billed_amount > budget_row.monthly_budget_amount - spent_amount - other_reserved then
     raise exception 'Actual AI cost would exceed the remaining monthly budget';
@@ -404,22 +418,37 @@ begin
     return;
   end if;
 
-  select count(*) into request_count
-    from public.learner_ai_requests r
-   where r.created_at >= date_trunc('month', now());
+  select
+    (select count(*) from public.learner_ai_requests r
+      where r.created_at >= date_trunc('month', now()))
+    +
+    (select count(*) from public.ai_background_budget_events e
+      where e.budget_id is null and e.created_at >= date_trunc('month', now()))
+    +
+    (select count(*) from public.ai_background_budget_reservations r
+      where r.budget_id is null and r.expires_at > now())
+    into request_count;
   if request_count > settings_row.monthly_request_limit then
     raise exception 'Platform monthly learner AI request limit has been reached';
   end if;
 
   delete from public.platform_ai_budget_reservations where expires_at <= now();
 
-  select coalesce(sum(e.billed_amount), 0) into spent_amount
-    from public.platform_ai_budget_events e
-   where e.created_at >= date_trunc('month', now());
+  select
+    coalesce((select sum(e.billed_amount) from public.platform_ai_budget_events e
+      where e.created_at >= date_trunc('month', now())), 0)
+    +
+    coalesce((select sum(e.billed_amount) from public.ai_background_budget_events e
+      where e.budget_id is null and e.created_at >= date_trunc('month', now())), 0)
+    into spent_amount;
 
-  select coalesce(sum(r.reserved_amount), 0) into reserved_amount
-    from public.platform_ai_budget_reservations r
-   where r.expires_at > now();
+  select
+    coalesce((select sum(r.reserved_amount) from public.platform_ai_budget_reservations r
+      where r.expires_at > now()), 0)
+    +
+    coalesce((select sum(r.reserved_amount) from public.ai_background_budget_reservations r
+      where r.budget_id is null and r.expires_at > now()), 0)
+    into reserved_amount;
 
   if p_estimated_amount > settings_row.monthly_budget_amount - spent_amount - reserved_amount then
     raise exception 'Platform monthly learner AI budget is insufficient';
@@ -493,13 +522,21 @@ begin
     raise exception 'Actual learner AI token usage exceeds configured limits';
   end if;
 
-  select coalesce(sum(e.billed_amount), 0) into spent_amount
-    from public.platform_ai_budget_events e
-   where e.created_at >= date_trunc('month', now());
+  select
+    coalesce((select sum(e.billed_amount) from public.platform_ai_budget_events e
+      where e.created_at >= date_trunc('month', now())), 0)
+    +
+    coalesce((select sum(e.billed_amount) from public.ai_background_budget_events e
+      where e.budget_id is null and e.created_at >= date_trunc('month', now())), 0)
+    into spent_amount;
 
-  select coalesce(sum(r.reserved_amount), 0) into other_reserved
-    from public.platform_ai_budget_reservations r
-   where r.request_id <> p_request_id and r.expires_at > now();
+  select
+    coalesce((select sum(r.reserved_amount) from public.platform_ai_budget_reservations r
+      where r.request_id <> p_request_id and r.expires_at > now()), 0)
+    +
+    coalesce((select sum(r.reserved_amount) from public.ai_background_budget_reservations r
+      where r.budget_id is null and r.expires_at > now()), 0)
+    into other_reserved;
 
   if p_billed_amount > settings_row.monthly_budget_amount - spent_amount - other_reserved then
     raise exception 'Actual learner AI cost would exceed the platform monthly budget';
@@ -571,5 +608,394 @@ grant execute on function public.worker_get_platform_ai_runtime() to service_rol
 grant execute on function public.worker_reserve_learner_ai_budget(uuid, numeric, integer, integer) to service_role;
 grant execute on function public.worker_finalize_learner_ai_request(uuid, text, text, integer, integer, numeric, jsonb) to service_role;
 grant execute on function public.worker_release_learner_ai_budget_reservation(uuid) to service_role;
+
+
+-- Background provider calls (question generation, embeddings, and RAG queries) do not
+-- have ai_requests row IDs. Keep a separate operation ledger, but share the same
+-- monthly tenant/platform spend, reservation, and request caps as interactive AI.
+create table if not exists public.ai_background_budget_reservations (
+  id uuid primary key default gen_random_uuid(),
+  operation_key text not null unique check (length(trim(operation_key)) between 8 and 180),
+  budget_id uuid references public.ai_budgets(id) on delete restrict,
+  tenant_id uuid references public.tenants(id) on delete restrict,
+  school_id uuid references public.schools(id) on delete restrict,
+  requester_user_id uuid references auth.users(id) on delete set null,
+  feature_key text not null,
+  operation_kind text not null,
+  provider_key text not null,
+  model_key text not null,
+  reserved_amount numeric(14,8) not null check (reserved_amount > 0),
+  estimated_input_tokens integer not null check (estimated_input_tokens > 0),
+  requested_output_tokens integer not null check (requested_output_tokens > 0),
+  currency character(3) not null default 'USD' check (currency = 'USD'),
+  expires_at timestamptz not null default (now() + interval '15 minutes'),
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  check ((tenant_id is null and school_id is null and budget_id is null)
+      or (tenant_id is not null and budget_id is not null))
+);
+
+create table if not exists public.ai_background_budget_events (
+  id uuid primary key default gen_random_uuid(),
+  operation_key text not null unique,
+  reservation_id uuid not null,
+  budget_id uuid references public.ai_budgets(id) on delete restrict,
+  tenant_id uuid references public.tenants(id) on delete restrict,
+  school_id uuid references public.schools(id) on delete restrict,
+  requester_user_id uuid references auth.users(id) on delete set null,
+  feature_key text not null,
+  operation_kind text not null,
+  provider_key text not null,
+  model_key text not null,
+  input_tokens integer not null check (input_tokens >= 0),
+  output_tokens integer not null check (output_tokens >= 0),
+  billed_amount numeric(14,8) not null check (billed_amount >= 0),
+  currency character(3) not null default 'USD' check (currency = 'USD'),
+  outcome text not null check (outcome in ('completed', 'failed', 'blocked')),
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  check ((tenant_id is null and school_id is null and budget_id is null)
+      or (tenant_id is not null and budget_id is not null))
+);
+
+create index if not exists ai_background_budget_reservations_scope_idx
+  on public.ai_background_budget_reservations(budget_id, expires_at);
+create index if not exists ai_background_budget_events_scope_idx
+  on public.ai_background_budget_events(budget_id, created_at);
+create index if not exists ai_background_budget_events_platform_month_idx
+  on public.ai_background_budget_events(created_at) where budget_id is null;
+
+alter table public.ai_background_budget_reservations enable row level security;
+alter table public.ai_background_budget_events enable row level security;
+revoke all on public.ai_background_budget_reservations, public.ai_background_budget_events
+  from public, anon, authenticated, myschool_runtime;
+grant all on public.ai_background_budget_reservations, public.ai_background_budget_events
+  to service_role;
+
+create or replace function public.worker_reserve_background_ai_operation(
+  p_operation_key text,
+  p_tenant_id uuid,
+  p_school_id uuid,
+  p_requester_user_id uuid,
+  p_feature_key text,
+  p_operation_kind text,
+  p_provider_key text,
+  p_model_key text,
+  p_estimated_amount numeric,
+  p_estimated_input_tokens integer,
+  p_requested_output_tokens integer,
+  p_metadata jsonb default '{}'::jsonb
+)
+returns table (
+  reservation_id uuid,
+  max_input_tokens integer,
+  max_output_tokens integer,
+  currency character(3)
+)
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $
+declare
+  budget_row public.ai_budgets%rowtype;
+  platform_row public.platform_ai_runtime_settings%rowtype;
+  reservation_row public.ai_background_budget_reservations%rowtype;
+  request_count bigint;
+  spent_amount numeric(14,8);
+  reserved_amount numeric(14,8);
+  month_start timestamptz := date_trunc('month', now());
+begin
+  if p_operation_key is null or length(trim(p_operation_key)) < 8 or length(p_operation_key) > 180
+     or p_feature_key is null or length(trim(p_feature_key)) = 0
+     or p_operation_kind is null or length(trim(p_operation_kind)) = 0
+     or p_provider_key is null or length(trim(p_provider_key)) = 0
+     or p_model_key is null or length(trim(p_model_key)) = 0 then
+    raise exception 'Background operation identity and provider route are required';
+  end if;
+  if p_estimated_amount is null or p_estimated_amount <= 0
+     or p_estimated_input_tokens is null or p_estimated_input_tokens < 1
+     or p_requested_output_tokens is null or p_requested_output_tokens < 1 then
+    raise exception 'A positive, priced background request and token estimate are required';
+  end if;
+  if p_school_id is not null and p_tenant_id is null then
+    raise exception 'A school-scoped background operation must include tenant_id';
+  end if;
+
+  delete from public.ai_background_budget_reservations r where r.expires_at <= now();
+
+  select * into reservation_row
+    from public.ai_background_budget_reservations r
+   where r.operation_key = p_operation_key
+   for update;
+  if found then
+    if reservation_row.tenant_id is distinct from p_tenant_id
+       or reservation_row.school_id is distinct from p_school_id then
+      raise exception 'Background operation key is already reserved for another scope';
+    end if;
+    return query select reservation_row.id,
+      case when reservation_row.budget_id is null then
+        (select s.max_input_tokens from public.platform_ai_runtime_settings s where s.singleton)
+      else (select b.max_input_tokens from public.ai_budgets b where b.id = reservation_row.budget_id) end,
+      case when reservation_row.budget_id is null then
+        (select s.max_output_tokens from public.platform_ai_runtime_settings s where s.singleton)
+      else (select b.max_output_tokens from public.ai_budgets b where b.id = reservation_row.budget_id) end,
+      reservation_row.currency;
+    return;
+  end if;
+
+  if exists (select 1 from public.ai_background_budget_events e where e.operation_key = p_operation_key) then
+    raise exception 'Background operation has already been settled';
+  end if;
+
+  if p_tenant_id is not null then
+    select * into budget_row
+      from public.ai_budgets b
+     where b.tenant_id = p_tenant_id
+       and b.is_active
+       and (b.school_id is not distinct from p_school_id
+         or (p_school_id is not null and b.school_id is null))
+     order by case when b.school_id is not distinct from p_school_id then 0 else 1 end
+     limit 1
+     for update;
+    if not found then raise exception 'No active AI budget is configured for this background operation'; end if;
+    if budget_row.currency <> 'USD' then raise exception 'AI background provider prices must be USD'; end if;
+    if p_estimated_input_tokens > budget_row.max_input_tokens
+       or p_requested_output_tokens > budget_row.max_output_tokens then
+      raise exception 'Background operation exceeds the tenant AI token limits';
+    end if;
+
+    select
+      (select count(*) from public.ai_requests r
+        where r.tenant_id = p_tenant_id
+          and (budget_row.school_id is null or r.school_id is not distinct from budget_row.school_id)
+          and r.created_at >= month_start)
+      +
+      (select count(*) from public.ai_background_budget_events e
+        where e.budget_id = budget_row.id and e.created_at >= month_start)
+      into request_count;
+    if request_count >= budget_row.monthly_request_limit then
+      raise exception 'The monthly tenant AI request limit has been reached';
+    end if;
+
+    select
+      coalesce((select sum(e.billed_amount) from public.ai_budget_events e
+        where e.budget_id = budget_row.id and e.created_at >= month_start), 0)
+      +
+      coalesce((select sum(e.billed_amount) from public.ai_background_budget_events e
+        where e.budget_id = budget_row.id and e.created_at >= month_start), 0)
+      into spent_amount;
+    select
+      coalesce((select sum(r.reserved_amount) from public.ai_budget_reservations r
+        where r.budget_id = budget_row.id and r.expires_at > now()), 0)
+      +
+      coalesce((select sum(r.reserved_amount) from public.ai_background_budget_reservations r
+        where r.budget_id = budget_row.id and r.expires_at > now()), 0)
+      into reserved_amount;
+    if p_estimated_amount > budget_row.monthly_budget_amount - spent_amount - reserved_amount then
+      raise exception 'The remaining monthly tenant AI budget is insufficient';
+    end if;
+
+    insert into public.ai_background_budget_reservations(
+      operation_key, budget_id, tenant_id, school_id, requester_user_id,
+      feature_key, operation_kind, provider_key, model_key, reserved_amount,
+      estimated_input_tokens, requested_output_tokens, currency, metadata
+    ) values (
+      p_operation_key, budget_row.id, p_tenant_id, p_school_id, p_requester_user_id,
+      p_feature_key, p_operation_kind, p_provider_key, p_model_key, p_estimated_amount,
+      p_estimated_input_tokens, p_requested_output_tokens, budget_row.currency, coalesce(p_metadata, '{}'::jsonb)
+    ) returning * into reservation_row;
+    return query select reservation_row.id, budget_row.max_input_tokens, budget_row.max_output_tokens, budget_row.currency;
+    return;
+  end if;
+
+  -- Shared/public curriculum and independent learner RAG use the platform budget.
+  select * into platform_row
+    from public.platform_ai_runtime_settings s
+   where s.singleton and s.is_enabled
+   for update;
+  if not found then
+    raise exception 'Platform AI runtime is disabled; shared/global background AI operations are blocked';
+  end if;
+  if platform_row.currency <> 'USD' then raise exception 'Platform background AI budget must be USD'; end if;
+  if p_estimated_input_tokens > platform_row.max_input_tokens
+     or p_requested_output_tokens > platform_row.max_output_tokens then
+    raise exception 'Background operation exceeds the platform AI token limits';
+  end if;
+
+  select
+    (select count(*) from public.learner_ai_requests r
+      where r.created_at >= month_start)
+    +
+    (select count(*) from public.ai_background_budget_events e
+      where e.budget_id is null and e.created_at >= month_start)
+    into request_count;
+  if request_count >= platform_row.monthly_request_limit then
+    raise exception 'The monthly platform AI request limit has been reached';
+  end if;
+
+  select
+    coalesce((select sum(e.billed_amount) from public.platform_ai_budget_events e
+      where e.created_at >= month_start), 0)
+    +
+    coalesce((select sum(e.billed_amount) from public.ai_background_budget_events e
+      where e.budget_id is null and e.created_at >= month_start), 0)
+    into spent_amount;
+  select
+    coalesce((select sum(r.reserved_amount) from public.platform_ai_budget_reservations r
+      where r.expires_at > now()), 0)
+    +
+    coalesce((select sum(r.reserved_amount) from public.ai_background_budget_reservations r
+      where r.budget_id is null and r.expires_at > now()), 0)
+    into reserved_amount;
+  if p_estimated_amount > platform_row.monthly_budget_amount - spent_amount - reserved_amount then
+    raise exception 'The remaining platform AI budget is insufficient';
+  end if;
+
+  insert into public.ai_background_budget_reservations(
+    operation_key, tenant_id, school_id, requester_user_id,
+    feature_key, operation_kind, provider_key, model_key, reserved_amount,
+    estimated_input_tokens, requested_output_tokens, currency, metadata
+  ) values (
+    p_operation_key, null, null, p_requester_user_id,
+    p_feature_key, p_operation_kind, p_provider_key, p_model_key, p_estimated_amount,
+    p_estimated_input_tokens, p_requested_output_tokens, platform_row.currency, coalesce(p_metadata, '{}'::jsonb)
+  ) returning * into reservation_row;
+  return query select reservation_row.id, platform_row.max_input_tokens, platform_row.max_output_tokens, platform_row.currency;
+end;
+$;
+
+create or replace function public.worker_finalize_background_ai_operation(
+  p_operation_key text,
+  p_provider_key text,
+  p_model_key text,
+  p_input_tokens integer,
+  p_output_tokens integer,
+  p_billed_amount numeric,
+  p_metadata jsonb default '{}'::jsonb
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $
+declare
+  reservation_row public.ai_background_budget_reservations%rowtype;
+  budget_row public.ai_budgets%rowtype;
+  platform_row public.platform_ai_runtime_settings%rowtype;
+  spent_amount numeric(14,8);
+  other_reserved numeric(14,8);
+  month_start timestamptz := date_trunc('month', now());
+begin
+  if p_operation_key is null or p_provider_key is null or p_model_key is null
+     or p_input_tokens is null or p_input_tokens < 0
+     or p_output_tokens is null or p_output_tokens < 0
+     or p_billed_amount is null or p_billed_amount < 0 then
+    raise exception 'Invalid background AI settlement values';
+  end if;
+  if exists (select 1 from public.ai_background_budget_events e where e.operation_key = p_operation_key) then
+    return false;
+  end if;
+
+  select * into reservation_row
+    from public.ai_background_budget_reservations r
+   where r.operation_key = p_operation_key
+   for update;
+  if not found then raise exception 'Background AI reservation not found or expired'; end if;
+  if reservation_row.provider_key <> p_provider_key or reservation_row.model_key <> p_model_key then
+    raise exception 'Background AI provider route changed during the request';
+  end if;
+
+  if reservation_row.budget_id is not null then
+    select * into budget_row from public.ai_budgets b where b.id = reservation_row.budget_id for update;
+    if not found or not budget_row.is_active then raise exception 'Tenant AI budget is no longer active'; end if;
+    if p_input_tokens > budget_row.max_input_tokens or p_output_tokens > budget_row.max_output_tokens then
+      raise exception 'Actual background AI token usage exceeds tenant limits';
+    end if;
+    select
+      coalesce((select sum(e.billed_amount) from public.ai_budget_events e
+        where e.budget_id = budget_row.id and e.created_at >= month_start), 0)
+      +
+      coalesce((select sum(e.billed_amount) from public.ai_background_budget_events e
+        where e.budget_id = budget_row.id and e.created_at >= month_start), 0)
+      into spent_amount;
+    select
+      coalesce((select sum(r.reserved_amount) from public.ai_budget_reservations r
+        where r.budget_id = budget_row.id and r.expires_at > now()), 0)
+      +
+      coalesce((select sum(r.reserved_amount) from public.ai_background_budget_reservations r
+        where r.budget_id = budget_row.id and r.operation_key <> p_operation_key and r.expires_at > now()), 0)
+      into other_reserved;
+    if p_billed_amount > budget_row.monthly_budget_amount - spent_amount - other_reserved then
+      raise exception 'Actual background AI cost would exceed tenant budget';
+    end if;
+  else
+    select * into platform_row from public.platform_ai_runtime_settings s
+     where s.singleton and s.is_enabled for update;
+    if not found then raise exception 'Platform AI runtime has been disabled during processing'; end if;
+    if p_input_tokens > platform_row.max_input_tokens or p_output_tokens > platform_row.max_output_tokens then
+      raise exception 'Actual background AI token usage exceeds platform limits';
+    end if;
+    select
+      coalesce((select sum(e.billed_amount) from public.platform_ai_budget_events e
+        where e.created_at >= month_start), 0)
+      +
+      coalesce((select sum(e.billed_amount) from public.ai_background_budget_events e
+        where e.budget_id is null and e.created_at >= month_start), 0)
+      into spent_amount;
+    select
+      coalesce((select sum(r.reserved_amount) from public.platform_ai_budget_reservations r
+        where r.expires_at > now()), 0)
+      +
+      coalesce((select sum(r.reserved_amount) from public.ai_background_budget_reservations r
+        where r.budget_id is null and r.operation_key <> p_operation_key and r.expires_at > now()), 0)
+      into other_reserved;
+    if p_billed_amount > platform_row.monthly_budget_amount - spent_amount - other_reserved then
+      raise exception 'Actual background AI cost would exceed platform budget';
+    end if;
+  end if;
+
+  insert into public.ai_background_budget_events(
+    operation_key, reservation_id, budget_id, tenant_id, school_id, requester_user_id,
+    feature_key, operation_kind, provider_key, model_key, input_tokens, output_tokens,
+    billed_amount, currency, outcome, metadata
+  ) values (
+    reservation_row.operation_key, reservation_row.id, reservation_row.budget_id,
+    reservation_row.tenant_id, reservation_row.school_id, reservation_row.requester_user_id,
+    reservation_row.feature_key, reservation_row.operation_kind, p_provider_key, p_model_key,
+    p_input_tokens, p_output_tokens, p_billed_amount, reservation_row.currency,
+    'completed', coalesce(p_metadata, '{}'::jsonb)
+  );
+  delete from public.ai_background_budget_reservations where operation_key = p_operation_key;
+  return true;
+end;
+$;
+
+create or replace function public.worker_release_background_ai_operation(p_operation_key text)
+returns boolean
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $
+declare
+  deleted_count integer;
+begin
+  delete from public.ai_background_budget_reservations where operation_key = p_operation_key;
+  get diagnostics deleted_count = row_count;
+  return deleted_count > 0;
+end;
+$;
+
+revoke all on function public.worker_reserve_background_ai_operation(text, uuid, uuid, uuid, text, text, text, text, numeric, integer, integer, jsonb)
+  from public, anon, authenticated, myschool_runtime;
+revoke all on function public.worker_finalize_background_ai_operation(text, text, text, integer, integer, numeric, jsonb)
+  from public, anon, authenticated, myschool_runtime;
+revoke all on function public.worker_release_background_ai_operation(text)
+  from public, anon, authenticated, myschool_runtime;
+grant execute on function public.worker_reserve_background_ai_operation(text, uuid, uuid, uuid, text, text, text, text, numeric, integer, integer, jsonb)
+  to service_role;
+grant execute on function public.worker_finalize_background_ai_operation(text, text, text, integer, integer, numeric, jsonb)
+  to service_role;
+grant execute on function public.worker_release_background_ai_operation(text)
+  to service_role;
 
 commit;
