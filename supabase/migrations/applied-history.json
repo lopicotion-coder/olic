@@ -1,7 +1,7 @@
 {
-  "captured_at": "2026-11-17",
+  "captured_at": "2026-11-18",
   "project_ref": "yigixquioguqnpbfhepi",
-  "migration_count": 30,
+  "migration_count": 40,
   "migrations": [
     {
       "version": "20261114151023",
@@ -122,6 +122,46 @@
     {
       "version": "20261114184346",
       "name": "phase7_parent_enrollment_notifications_and_profile"
+    },
+    {
+      "version": "20261117223622",
+      "name": "phase8_runtime_self_scope_read_policies"
+    },
+    {
+      "version": "20261117223704",
+      "name": "phase8_remove_duplicate_self_read_policies"
+    },
+    {
+      "version": "20261117224223",
+      "name": "phase8_restrict_student_username_internal_helper"
+    },
+    {
+      "version": "20261118102448",
+      "name": "20261118000200_secure_authenticated_access_and_integrity"
+    },
+    {
+      "version": "20261118112644",
+      "name": "phase9_ai_curriculum_question_bank"
+    },
+    {
+      "version": "20261118113301",
+      "name": "phase9_internal_worker_policies"
+    },
+    {
+      "version": "20261118113645",
+      "name": "phase9_background_queue_extensions"
+    },
+    {
+      "version": "20261118114203",
+      "name": "phase9_question_generation_scheduler"
+    },
+    {
+      "version": "20261118114427",
+      "name": "phase9_publish_jobs_to_pgmq"
+    },
+    {
+      "version": "20261118114708",
+      "name": "phase9_question_scope_and_audit_hardening"
     }
   ]
 }
