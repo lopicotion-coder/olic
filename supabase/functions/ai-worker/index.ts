@@ -660,180 +660,410 @@ function normalizeChoices(choices: unknown): unknown[] {
   return [];
 }
 
-async function processQuestionGeneration(limit: number): Promise<{ processed: number; generated: number; failed: number }> {
-  const { data, error } = await supabase
-    .from("question_generation_jobs")
-    .select("id,batch_id,schedule_id,source_version_id,job_type,job_status,idempotency_key,payload,attempts,max_attempts,available_at,last_error")
-    .eq("job_status", "queued")
-    .order("created_at", { ascending: true })
-    .limit(limit);
-  if (error) throw error;
-
+async function processQuestionGeneration(limit: number): Promise<{ processed: number; generated: number; failed: number; skipped: number }> {
+  const deliveries = await readQueue("myschool_question_generation", limit);
+  const workerId = crypto.randomUUID();
   let processed = 0;
   let generated = 0;
   let failed = 0;
+  let skipped = 0;
 
-  for (const job of (data ?? []) as QuestionJobRow[]) {
+  for (const delivery of deliveries) {
+    const jobId = String(delivery.message?.job_id ?? "");
+    if (!/^[0-9a-f-]{36}$/i.test(jobId)) {
+      await archiveQueueMessage("myschool_question_generation", delivery.msg_id);
+      skipped += 1;
+      continue;
+    }
+
+    const job = await claimQuestionJob(jobId, workerId);
+    if (!job) {
+      await archiveQueueMessage("myschool_question_generation", delivery.msg_id);
+      skipped += 1;
+      continue;
+    }
+
+    let finalized = false;
+    let accepted = 0;
+    let rejected = 0;
+
     try {
-      await supabase.from("question_generation_jobs").update({ job_status: "processing", attempts: job.attempts + 1 }).eq("id", job.id);
+      if (job.job_type !== "generate_questions") {
+        throw new Error(`Unsupported question generation job type: ${job.job_type}`);
+      }
+      if (!job.batch_id || !job.source_version_id) {
+        throw new Error("Question generation job is missing its batch or source version");
+      }
 
-      const { data: batch, error: batchErr } = await supabase
+      const { data: batch, error: batchError } = await supabase
         .from("question_generation_batches")
         .select("id,sharing_scope,tenant_id,school_id,source_version_id,subject_code,grade_code,unit_title,lesson_title,question_types,requested_count,generated_count,accepted_count,rejected_count,batch_status,provider_key,model_key,prompt_version")
         .eq("id", job.batch_id)
         .single();
-      if (batchErr) throw batchErr;
+      dbError("Load question generation batch", batchError);
+      if (!batch) throw new Error("QUESTION_BATCH_NOT_FOUND");
 
-      const { data: version, error: versionErr } = await supabase
+      const { data: version, error: versionError } = await supabase
         .from("curriculum_source_versions")
         .select("id,source_id,version_label,ingestion_status,storage_bucket,storage_object_path,extraction_metadata")
         .eq("id", batch.source_version_id)
         .single();
-      if (versionErr) throw versionErr;
+      dbError("Load curriculum version for question generation", versionError);
+      if (!version || version.ingestion_status !== "ready") {
+        throw new Error("CURRICULUM_VERSION_NOT_READY");
+      }
 
-      const { data: source, error: sourceErr } = await supabase
+      const { data: source, error: sourceError } = await supabase
         .from("curriculum_sources")
         .select("id,title,subject_code,subject_name,grade_code,grade_label,sharing_scope,tenant_id,school_id,status,rights_status,permitted_uses")
         .eq("id", version.source_id)
         .single();
-      if (sourceErr) throw sourceErr;
+      dbError("Load curriculum source for question generation", sourceError);
+      if (!source || source.status !== "active" || source.rights_status !== "approved" ||
+          !Array.isArray(source.permitted_uses) || !source.permitted_uses.includes("question_generation")) {
+        throw new Error("CURRICULUM_SOURCE_NOT_APPROVED_FOR_QUESTION_GENERATION");
+      }
 
-      const { data: chunks, error: chunksErr } = await supabase
+      const { data: chunks, error: chunksError } = await supabase
         .from("curriculum_chunks")
         .select("id,source_id,source_version_id,chunk_index,page_start,page_end,chapter_title,section_title,content_text,content_sha256,token_count,metadata")
         .eq("source_version_id", batch.source_version_id)
         .eq("status", "embedded")
+        .not("embedding", "is", null)
         .order("chunk_index", { ascending: true })
         .limit(20);
-      if (chunksErr) throw chunksErr;
-
+      dbError("Load embedded curriculum chunks", chunksError);
       if (!chunks || chunks.length === 0) {
-        throw new Error("No embedded curriculum chunks available yet for this source version");
+        throw new Error("NO_EMBEDDED_CURRICULUM_CHUNKS");
       }
 
       const route = await selectRoute(batch.tenant_id, batch.school_id, "exam_generator");
       const provider = normalizeProvider(route?.provider_key ?? batch.provider_key ?? DEFAULT_PROVIDER) ?? DEFAULT_PROVIDER;
-      const model = route?.model_key ?? batch.model_key ?? (provider === "openrouter" ? DEFAULT_MODEL_OPENROUTER : provider === "openai" ? DEFAULT_MODEL_OPENAI : provider === "gemini" ? DEFAULT_MODEL_GEMINI : DEFAULT_MODEL_XAI);
-      const maxOutputTokens = route?.max_output_tokens ?? 4096;
-      const prompt = systemPromptForQuestionGeneration(source as CurriculumSourceRow, version as CurriculumVersionRow, chunks as CurriculumChunkRow[], batch as QuestionBatchRow);
-      const response = await callProvider(provider, model, [
-        { role: "system", content: prompt },
-        { role: "user", content: `Generate ${batch.requested_count} questions grounded only in these chunks.` },
-      ], maxOutputTokens);
+      const model = route?.model_key ?? batch.model_key ?? (
+        provider === "openrouter" ? DEFAULT_MODEL_OPENROUTER :
+        provider === "openai" ? DEFAULT_MODEL_OPENAI :
+        provider === "gemini" ? DEFAULT_MODEL_GEMINI : DEFAULT_MODEL_XAI
+      );
+      const maxOutputTokens = Math.min(8192, Math.max(512, route?.max_output_tokens ?? 4096));
 
-      const parsed = parseQuestionPayload(response.content);
-      let accepted = 0;
-      let rejected = 0;
-      for (const q of parsed.questions) {
-        if (!q || typeof q !== "object") {
-          rejected += 1;
-          continue;
+      let jobResult: {
+        questions: unknown[];
+        provider_key: string;
+        model_key: string;
+        prompt_version: string | null;
+      } | null = null;
+
+      const { data: previousResult, error: previousResultError } = await supabase
+        .from("question_generation_job_results")
+        .select("questions,provider_key,model_key,prompt_version,finalized_at")
+        .eq("job_id", job.id)
+        .maybeSingle();
+      dbError("Load saved question generation result", previousResultError);
+
+      if (previousResult?.finalized_at) {
+        finalized = true;
+        await archiveQueueMessage("myschool_question_generation", delivery.msg_id);
+        processed += 1;
+        continue;
+      }
+
+      if (previousResult) {
+        if (!Array.isArray(previousResult.questions)) {
+          throw new Error("SAVED_QUESTION_GENERATION_RESULT_IS_INVALID");
         }
-        const item = q as Record<string, unknown>;
-        const questionText = String(item.question_text ?? "").trim();
-        if (!questionText) {
-          rejected += 1;
-          continue;
-        }
-        const questionType = String(item.question_type ?? "multiple_choice").trim();
-        const difficultyRaw = Number(item.difficulty ?? 3);
-        const difficulty = Number.isFinite(difficultyRaw) ? Math.min(5, Math.max(1, Math.round(difficultyRaw))) : 3;
-        const tags = Array.isArray(item.tags) ? item.tags.map((x) => String(x)) : [];
-        const choices = normalizeChoices(item.choices);
-        const answerPayload = item.answer_payload ?? item.answer ?? item.correct_answer ?? {};
-        const explanation = String(item.explanation ?? "").trim();
-        const chunkIndexes = Array.isArray(item.grounded_chunk_indexes) ? item.grounded_chunk_indexes.map((x) => Number(x)).filter((x) => Number.isInteger(x) && x >= 0) : [0];
-        const groundedChunks = chunkIndexes.map((i) => chunks[i]).filter(Boolean) as CurriculumChunkRow[];
-        if (groundedChunks.length === 0) {
-          rejected += 1;
-          continue;
-        }
-        const fingerprint = await sha256Hex(`${questionText}\n${JSON.stringify(answerPayload)}\n${batch.source_version_id}`.toLowerCase());
-        const { data: insertedQuestion, error: insertErr } = await supabase
-          .from("question_bank")
+        jobResult = {
+          questions: previousResult.questions,
+          provider_key: previousResult.provider_key,
+          model_key: previousResult.model_key,
+          prompt_version: previousResult.prompt_version,
+        };
+      } else {
+        const prompt = systemPromptForQuestionGeneration(
+          source as CurriculumSourceRow,
+          version as CurriculumVersionRow,
+          chunks as CurriculumChunkRow[],
+          batch as QuestionBatchRow,
+        );
+        const response = await callProvider(provider, model, [
+          { role: "system", content: prompt },
+          { role: "user", content: `Generate exactly ${batch.requested_count} questions grounded only in these approved chunks. Every question must include non-empty grounded_chunk_indexes.` },
+        ], maxOutputTokens);
+        const parsed = parseQuestionPayload(response.content);
+        const responseHash = await sha256Hex(response.content);
+
+        const { data: insertedResult, error: insertResultError } = await supabase
+          .from("question_generation_job_results")
           .insert({
-            sharing_scope: batch.sharing_scope,
-            tenant_id: batch.tenant_id,
-            school_id: batch.school_id,
-            subject_code: source.subject_code,
-            subject_name: source.subject_name,
-            grade_code: source.grade_code,
-            grade_label: source.grade_label,
-            unit_title: batch.unit_title,
-            lesson_title: batch.lesson_title,
-            question_type: questionType,
-            question_text: questionText,
-            choices,
-            language_code: "ar",
-            difficulty,
-            tags,
-            origin_type: "ai_generated",
-            review_status: "pending_review",
-            record_status: "active",
-            content_fingerprint: fingerprint,
+            job_id: job.id,
+            batch_id: batch.id,
             provider_key: provider,
             model_key: model,
             prompt_version: batch.prompt_version ?? "phase9-v1",
-            generated_by_request_id: null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
+            response_sha256: responseHash,
+            questions: parsed.questions,
           })
-          .select("id")
+          .select("questions,provider_key,model_key,prompt_version")
           .single();
-        if (insertErr || !insertedQuestion) {
+
+        if (insertResultError?.code === "23505") {
+          const { data: concurrentResult, error: concurrentResultError } = await supabase
+            .from("question_generation_job_results")
+            .select("questions,provider_key,model_key,prompt_version")
+            .eq("job_id", job.id)
+            .single();
+          dbError("Read concurrent saved question result", concurrentResultError);
+          jobResult = concurrentResult;
+        } else {
+          dbError("Persist question generation result", insertResultError);
+          jobResult = insertedResult;
+        }
+      }
+
+      if (!jobResult || !Array.isArray(jobResult.questions)) {
+        throw new Error("QUESTION_GENERATION_RESULT_NOT_AVAILABLE");
+      }
+
+      const allowedTypes = Array.isArray(batch.question_types) ? batch.question_types.map(String) : [];
+      const usedChunkIndexes = new Set<number>();
+      for (const rawQuestion of jobResult.questions) {
+        if (!rawQuestion || typeof rawQuestion !== "object" || Array.isArray(rawQuestion)) {
           rejected += 1;
           continue;
         }
-        await supabase.from("question_bank_answers").insert({
-          question_id: insertedQuestion.id,
-          answer_payload: answerPayload,
-          explanation,
-          marking_rubric: { source: "ai-worker", grounded_chunk_indexes: chunkIndexes },
-          answer_reveal_policy: "after_submission",
-        });
-        for (const [order, chunk] of groundedChunks.entries()) {
-          await supabase.from("question_sources").insert({
-            question_id: insertedQuestion.id,
-            chunk_id: chunk.id,
-            relation_type: order === 0 ? "question_grounding" : "reference",
-            evidence_excerpt: chunk.content_text.slice(0, 2000),
-            citation_order: order + 1,
-            grounding_score: 0.85,
-          });
+
+        const item = rawQuestion as Record<string, unknown>;
+        const questionText = String(item.question_text ?? "").trim();
+        const questionType = String(item.question_type ?? "").trim();
+        const answerPayload = item.answer_payload ?? item.answer ?? item.correct_answer;
+        const choices = normalizeChoices(item.choices);
+        const explanation = String(item.explanation ?? "").trim();
+        const difficultyRaw = Number(item.difficulty ?? 3);
+        const difficulty = Number.isFinite(difficultyRaw)
+          ? Math.min(5, Math.max(1, Math.round(difficultyRaw)))
+          : 3;
+        const tags = Array.isArray(item.tags) ? item.tags.map((value) => String(value).slice(0, 80)).slice(0, 20) : [];
+
+        const rawChunkIndexes = Array.isArray(item.grounded_chunk_indexes)
+          ? item.grounded_chunk_indexes
+          : [];
+        const chunkIndexes = [...new Set(
+          rawChunkIndexes
+            .map((value) => Number(value))
+            .filter((value) => Number.isInteger(value) && value >= 0 && value < chunks.length),
+        )];
+        const groundedChunks = chunkIndexes.map((index) => chunks[index]).filter(Boolean) as CurriculumChunkRow[];
+
+        const structurallyValid =
+          questionText.length >= 5 &&
+          questionText.length <= 4000 &&
+          allowedTypes.includes(questionType) &&
+          answerPayload !== undefined &&
+          answerPayload !== null &&
+          groundedChunks.length > 0 &&
+          (questionType !== "multiple_choice" || choices.length >= 2);
+
+        if (!structurallyValid) {
+          rejected += 1;
+          continue;
         }
-        await supabase.from("question_quality_checks").insert([
-          { question_id: insertedQuestion.id, check_key: "schema", result: "passed", score: 1, details: { provider, model } },
-          { question_id: insertedQuestion.id, check_key: "curriculum_grounding", result: "passed", score: 1, details: { chunk_indexes: chunkIndexes } },
-        ]);
+
+        const answerJson = JSON.stringify(answerPayload);
+        const fingerprint = await sha256Hex(
+          `${questionText.normalize("NFC").trim()}\n${answerJson}\n${batch.source_version_id}`.toLowerCase(),
+        );
+
+        let existingQuestionQuery = supabase
+          .from("question_bank")
+          .select("id,review_status")
+          .eq("sharing_scope", batch.sharing_scope)
+          .eq("subject_code", source.subject_code)
+          .eq("grade_code", source.grade_code)
+          .eq("content_fingerprint", fingerprint);
+
+        if (batch.tenant_id) existingQuestionQuery = existingQuestionQuery.eq("tenant_id", batch.tenant_id);
+        else existingQuestionQuery = existingQuestionQuery.is("tenant_id", null);
+        if (batch.school_id) existingQuestionQuery = existingQuestionQuery.eq("school_id", batch.school_id);
+        else existingQuestionQuery = existingQuestionQuery.is("school_id", null);
+
+        const { data: existingQuestion, error: existingQuestionError } = await existingQuestionQuery.maybeSingle();
+        dbError("Check reusable question fingerprint", existingQuestionError);
+
+        let questionId: string;
+        if (existingQuestion?.id) {
+          questionId = existingQuestion.id;
+        } else {
+          const { data: insertedQuestion, error: insertQuestionError } = await supabase
+            .from("question_bank")
+            .insert({
+              sharing_scope: batch.sharing_scope,
+              tenant_id: batch.tenant_id,
+              school_id: batch.school_id,
+              subject_code: source.subject_code,
+              subject_name: source.subject_name,
+              grade_code: source.grade_code,
+              grade_label: source.grade_label,
+              unit_title: batch.unit_title,
+              lesson_title: batch.lesson_title,
+              question_type: questionType,
+              question_text: questionText,
+              choices,
+              language_code: "ar",
+              difficulty,
+              tags,
+              origin_type: "ai_generated",
+              review_status: "pending_review",
+              record_status: "active",
+              content_fingerprint: fingerprint,
+              provider_key: jobResult.provider_key,
+              model_key: jobResult.model_key,
+              prompt_version: jobResult.prompt_version ?? "phase9-v1",
+              generated_by_request_id: null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .select("id")
+            .single();
+
+          if (insertQuestionError?.code === "23505") {
+            let duplicateQuery = supabase
+              .from("question_bank")
+              .select("id,review_status")
+              .eq("sharing_scope", batch.sharing_scope)
+              .eq("subject_code", source.subject_code)
+              .eq("grade_code", source.grade_code)
+              .eq("content_fingerprint", fingerprint);
+            if (batch.tenant_id) duplicateQuery = duplicateQuery.eq("tenant_id", batch.tenant_id);
+            else duplicateQuery = duplicateQuery.is("tenant_id", null);
+            if (batch.school_id) duplicateQuery = duplicateQuery.eq("school_id", batch.school_id);
+            else duplicateQuery = duplicateQuery.is("school_id", null);
+            const { data: duplicateQuestion, error: duplicateError } = await duplicateQuery.maybeSingle();
+            dbError("Load concurrently inserted reusable question", duplicateError);
+            if (!duplicateQuestion?.id) throw insertQuestionError;
+            questionId = duplicateQuestion.id;
+          } else {
+            dbError("Insert reusable question", insertQuestionError);
+            if (!insertedQuestion?.id) throw new Error("QUESTION_INSERT_RETURNED_NO_ID");
+            questionId = insertedQuestion.id;
+          }
+        }
+
+        // Preserve an existing answer key if a teacher has already reviewed or edited it.
+        const { data: existingAnswer, error: answerLookupError } = await supabase
+          .from("question_bank_answers")
+          .select("question_id")
+          .eq("question_id", questionId)
+          .maybeSingle();
+        dbError("Check protected question answer", answerLookupError);
+
+        if (!existingAnswer) {
+          const { error: answerInsertError } = await supabase.from("question_bank_answers").insert({
+            question_id: questionId,
+            answer_payload: answerPayload,
+            explanation,
+            marking_rubric: {
+              source: "ai-worker",
+              grounded_chunk_indexes: chunkIndexes,
+              source_version_id: batch.source_version_id,
+            },
+            answer_reveal_policy: "after_submission",
+          });
+          if (answerInsertError && answerInsertError.code !== "23505") {
+            dbError("Save protected question answer", answerInsertError);
+          }
+        }
+
+        const sourceRows = groundedChunks.map((chunk, index) => ({
+          question_id: questionId,
+          chunk_id: chunk.id,
+          relation_type: index === 0 ? "question_grounding" : "reference",
+          evidence_excerpt: chunk.content_text.slice(0, 2000),
+          citation_order: index + 1,
+          grounding_score: 0.85,
+        }));
+        const { error: sourcesError } = await supabase
+          .from("question_sources")
+          .upsert(sourceRows, { onConflict: "question_id,chunk_id,relation_type" });
+        dbError("Save question curriculum references", sourcesError);
+
+        const qualityRows = [
+          {
+            question_id: questionId,
+            check_key: "schema",
+            result: "passed",
+            score: 1,
+            details: { validation_level: "structural", question_type: questionType },
+            validator_provider: jobResult.provider_key,
+            validator_model: jobResult.model_key,
+          },
+          {
+            question_id: questionId,
+            check_key: "curriculum_grounding",
+            result: "passed",
+            score: 1,
+            details: {
+              validation_level: "source_link_exists",
+              chunk_indexes: chunkIndexes,
+              source_version_id: batch.source_version_id,
+            },
+            validator_provider: jobResult.provider_key,
+            validator_model: jobResult.model_key,
+          },
+        ];
+        const { error: qualityError } = await supabase
+          .from("question_quality_checks")
+          .upsert(qualityRows, {
+            onConflict: "question_id,check_key,validator_provider,validator_model",
+          });
+        dbError("Save question quality checks", qualityError);
+
+        chunkIndexes.forEach((index) => usedChunkIndexes.add(index));
         accepted += 1;
         generated += 1;
       }
 
-      await supabase.from("question_generation_batches").update({
-        generated_count: (batch.generated_count ?? 0) + accepted + rejected,
-        accepted_count: (batch.accepted_count ?? 0) + accepted,
-        rejected_count: (batch.rejected_count ?? 0) + rejected,
-        batch_status: accepted > 0 ? "completed" : "failed",
-        provider_key: provider,
-        model_key: model,
-      }).eq("id", batch.id);
+      const { data: finalizedResult, error: finalizeError } = await supabase.rpc(
+        "worker_finalize_question_generation_job",
+        {
+          p_job_id: job.id,
+          p_batch_id: batch.id,
+          p_accepted_count: accepted,
+          p_rejected_count: rejected,
+          p_provider_key: jobResult.provider_key,
+          p_model_key: jobResult.model_key,
+        },
+      );
+      dbError("Finalize question generation job", finalizeError);
+      finalized = finalizedResult === true || finalizedResult === false;
 
-      await supabase.from("question_generation_jobs").update({ job_status: "completed", last_error: null }).eq("id", job.id);
+      await archiveQueueMessage("myschool_question_generation", delivery.msg_id);
       processed += 1;
     } catch (err) {
+      if (finalized) {
+        // Completion was committed; a failed archive is safe because the next
+        // delivery will observe a completed job and archive without regenerating.
+        console.error("Question job completed but queue archive failed", job.id, err);
+        processed += 1;
+        continue;
+      }
+
       failed += 1;
-      await supabase.from("question_generation_jobs").update({
-        job_status: job.attempts + 1 >= job.max_attempts ? "failed" : "retrying",
-        last_error: err instanceof Error ? err.message : String(err),
-        available_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      const terminal = Number(job.attempts) >= Number(job.max_attempts);
+      const { error: releaseError } = await supabase.from("question_generation_jobs").update({
+        job_status: terminal ? "failed" : "retrying",
+        last_error: err instanceof Error ? err.message.slice(0, 1000) : "Question generation failed",
+        available_at: new Date(Date.now() + retryDelayMinutes(Number(job.attempts)) * 60_000).toISOString(),
+        locked_at: null,
+        locked_by: null,
+        updated_at: new Date().toISOString(),
       }).eq("id", job.id);
+      dbError("Release failed question generation job", releaseError);
+      await archiveQueueMessage("myschool_question_generation", delivery.msg_id);
+      console.error("Question generation failed", job.id, err);
     }
   }
 
-  return { processed, generated, failed };
+  return { processed, generated, failed, skipped };
 }
-
-
 
 async function processIngestionJobs(limit: number): Promise<{ extracted: number; embedded: number; deferred: number; failed: number; skipped: number }> {
   const deliveries = await readQueue("myschool_curriculum_ingestion", limit);
