@@ -1,5 +1,3 @@
-import * as pdfjsModule from "npm:pdfjs-dist@4.10.38/legacy/build/pdf.mjs";
-import * as mammothModule from "npm:mammoth@1.9.0";
 
 export type ExtractedPage = {
   pageNumber: number | null;
@@ -34,8 +32,6 @@ type MammothApi = {
   extractRawText(input: { arrayBuffer: ArrayBuffer }): Promise<{ value: string; messages: unknown[] }>;
 };
 
-const pdfjs = pdfjsModule as unknown as PdfJsApi;
-const mammoth = mammothModule as unknown as MammothApi;
 
 function normalizeExtractedText(value: string): string {
   return value
@@ -85,6 +81,8 @@ function linesFromPdfItems(items: Array<{ str?: string; transform?: number[] }>)
 }
 
 async function extractPdf(bytes: Uint8Array): Promise<ExtractedPage[]> {
+  const pdfjsModule = await import("npm:pdfjs-dist@4.10.38/legacy/build/pdf.mjs");
+  const pdfjs = pdfjsModule as unknown as PdfJsApi;
   const document = await pdfjs.getDocument({
     data: bytes,
     useSystemFonts: true,
@@ -127,6 +125,8 @@ export async function extractCurriculumDocument(
     fileName.toLowerCase().endsWith(".docx")
   ) {
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const mammothModule = await import("npm:mammoth@1.9.0");
+    const mammoth = mammothModule as unknown as MammothApi;
     const result = await mammoth.extractRawText({ arrayBuffer: buffer });
     pages = [{ pageNumber: null, text: normalizeExtractedText(result.value) }];
   } else if (
@@ -218,7 +218,7 @@ export function chunkCurriculumPages(
       }
 
       const pieces = paragraph.length > maxCharacters
-        ? paragraph.match(new RegExp(`.{1,${maxCharacters}}(?:\\\\s|$)`, "gu")) ?? [paragraph]
+        ? paragraph.match(new RegExp(`.{1,${maxCharacters}}(?:\\s|$)`, "gu")) ?? [paragraph]
         : [paragraph];
 
       for (const piece of pieces) {
