@@ -1,0 +1,31 @@
+name: Supabase Edge Function Checks
+
+on:
+  pull_request:
+    paths:
+      - "supabase/functions/**"
+      - ".github/workflows/supabase-functions.yml"
+  push:
+    branches:
+      - develop
+    paths:
+      - "supabase/functions/**"
+      - ".github/workflows/supabase-functions.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  worker-auth-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Format worker auth helper and tests
+        run: deno fmt --check supabase/functions/ai-worker/worker-auth.ts supabase/functions/ai-worker/worker-auth.test.ts
+      - name: Run worker auth tests
+        run: deno test --no-check supabase/functions/ai-worker/worker-auth.test.ts
