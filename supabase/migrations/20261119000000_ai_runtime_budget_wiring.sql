@@ -1149,4 +1149,109 @@ grant execute on function public.worker_fail_ai_request_after_provider(uuid, uui
 grant execute on function public.worker_fail_learner_ai_request_after_provider(uuid, text, text, integer, integer, numeric, text, jsonb)
   to service_role;
 
+
+create or replace function public.worker_fail_background_ai_operation(
+  p_operation_key text,
+  p_provider_key text,
+  p_model_key text,
+  p_input_tokens integer,
+  p_output_tokens integer,
+  p_billed_amount numeric,
+  p_failure_reason text,
+  p_metadata jsonb default '{}'::jsonb
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  reservation_row public.ai_background_budget_reservations%rowtype;
+  budget_row public.ai_budgets%rowtype;
+  settings_row public.platform_ai_runtime_settings%rowtype;
+  spent_amount numeric(14,8);
+  other_reserved numeric(14,8);
+  budget_overrun boolean := false;
+  token_limit_exceeded boolean := false;
+  month_start timestamptz := date_trunc('month', now());
+begin
+  if p_operation_key is null or p_provider_key is null or p_model_key is null
+     or p_input_tokens is null or p_input_tokens < 0
+     or p_output_tokens is null or p_output_tokens < 0
+     or p_billed_amount is null or p_billed_amount < 0 then
+    raise exception 'Invalid failed background AI settlement values';
+  end if;
+  if exists (select 1 from public.ai_background_budget_events e where e.operation_key = p_operation_key) then
+    return false;
+  end if;
+  select * into reservation_row from public.ai_background_budget_reservations r
+   where r.operation_key = p_operation_key for update;
+  if not found then raise exception 'Background AI reservation not found or expired'; end if;
+  if reservation_row.provider_key <> p_provider_key or reservation_row.model_key <> p_model_key then
+    raise exception 'Background AI provider route does not match its reservation';
+  end if;
+
+  if reservation_row.budget_id is not null then
+    select * into budget_row from public.ai_budgets b where b.id = reservation_row.budget_id for update;
+    if not found then raise exception 'Background AI budget row no longer exists'; end if;
+    select
+      coalesce((select sum(e.billed_amount) from public.ai_budget_events e
+        where e.budget_id = budget_row.id and e.created_at >= month_start), 0)
+      + coalesce((select sum(e.billed_amount) from public.ai_background_budget_events e
+        where e.budget_id = budget_row.id and e.created_at >= month_start), 0)
+      into spent_amount;
+    select
+      coalesce((select sum(r.reserved_amount) from public.ai_budget_reservations r
+        where r.budget_id = budget_row.id and r.expires_at > now()), 0)
+      + coalesce((select sum(r.reserved_amount) from public.ai_background_budget_reservations r
+        where r.budget_id = budget_row.id and r.operation_key <> p_operation_key and r.expires_at > now()), 0)
+      into other_reserved;
+    budget_overrun := p_billed_amount > budget_row.monthly_budget_amount - spent_amount - other_reserved;
+    token_limit_exceeded := p_input_tokens > budget_row.max_input_tokens or p_output_tokens > budget_row.max_output_tokens;
+  else
+    -- Even if platform AI has just been switched off, incurred provider spend must be recorded.
+    select * into settings_row from public.platform_ai_runtime_settings s where s.singleton for update;
+    if not found then raise exception 'Platform AI settings row no longer exists'; end if;
+    select
+      coalesce((select sum(e.billed_amount) from public.platform_ai_budget_events e
+        where e.created_at >= month_start), 0)
+      + coalesce((select sum(e.billed_amount) from public.ai_background_budget_events e
+        where e.budget_id is null and e.created_at >= month_start), 0)
+      into spent_amount;
+    select
+      coalesce((select sum(r.reserved_amount) from public.platform_ai_budget_reservations r
+        where r.expires_at > now()), 0)
+      + coalesce((select sum(r.reserved_amount) from public.ai_background_budget_reservations r
+        where r.budget_id is null and r.operation_key <> p_operation_key and r.expires_at > now()), 0)
+      into other_reserved;
+    budget_overrun := p_billed_amount > settings_row.monthly_budget_amount - spent_amount - other_reserved;
+    token_limit_exceeded := p_input_tokens > settings_row.max_input_tokens or p_output_tokens > settings_row.max_output_tokens;
+  end if;
+
+  insert into public.ai_background_budget_events(
+    operation_key, reservation_id, budget_id, tenant_id, school_id, requester_user_id,
+    feature_key, operation_kind, provider_key, model_key, input_tokens, output_tokens,
+    billed_amount, currency, outcome, metadata
+  ) values (
+    reservation_row.operation_key, reservation_row.id, reservation_row.budget_id,
+    reservation_row.tenant_id, reservation_row.school_id, reservation_row.requester_user_id,
+    reservation_row.feature_key, reservation_row.operation_kind, p_provider_key, p_model_key,
+    p_input_tokens, p_output_tokens, p_billed_amount, reservation_row.currency,
+    'failed',
+    coalesce(p_metadata, '{}'::jsonb) || jsonb_build_object(
+      'failure_reason', left(coalesce(p_failure_reason, 'post-provider settlement failure'), 1000),
+      'budget_overrun', budget_overrun,
+      'token_limit_exceeded', token_limit_exceeded
+    )
+  );
+  delete from public.ai_background_budget_reservations where operation_key = p_operation_key;
+  return true;
+end;
+$$;
+
+revoke all on function public.worker_fail_background_ai_operation(text, text, text, integer, integer, numeric, text, jsonb)
+  from public, anon, authenticated, myschool_runtime;
+grant execute on function public.worker_fail_background_ai_operation(text, text, text, integer, integer, numeric, text, jsonb)
+  to service_role;
+
 commit;
