@@ -211,3 +211,5 @@ Every phase must include:
 - Vault snapshot corrected: Vault is installed; scheduler secrets are not registered.
 
 - Added a paid-operation completion callback to all Worker paths (QGen, ingestion/queued embeddings, and tenant/platform RAG). Any downstream error after a billed provider call marks the parent job/request terminal instead of issuing a duplicate paid call.
+
+- Release caveat: caught post-provider failures are settled or made terminal without automatic re-call. A hard Worker process termination in the provider-success/settlement window remains a distributed failure boundary; staging must verify reservation TTL and manual billing reconciliation before release.
