@@ -147,6 +147,40 @@ where s.learner_profile_id is not null
       and m.student_id = s.id
   );
 
+-- Preserve existing authenticated parent/guardian relationships where the school guardian
+-- record has a linked account. Unlinked paper-only guardians remain school records.
+insert into public.learner_guardians (
+  learner_profile_id, guardian_user_id, relationship, link_status,
+  can_view_progress, can_manage_learning, can_manage_payments,
+  is_primary, created_by_user_id, verified_at
+)
+select
+  st.learner_profile_id,
+  g.profile_id,
+  case
+    when sg.relationship in ('father', 'mother', 'guardian', 'other') then sg.relationship
+    else 'other'
+  end,
+  case when g.status::text = 'active' then 'active' else 'pending' end,
+  true,
+  true,
+  false,
+  sg.is_primary,
+  g.profile_id,
+  case when g.status::text = 'active' then now() else null end
+from public.student_guardians sg
+join public.students st
+  on st.id = sg.student_id
+ and st.tenant_id = sg.tenant_id
+ and st.school_id = sg.school_id
+join public.guardians g
+  on g.id = sg.guardian_id
+ and g.tenant_id = sg.tenant_id
+ and g.school_id = sg.school_id
+where st.learner_profile_id is not null
+  and g.profile_id is not null
+on conflict (learner_profile_id, guardian_user_id) do nothing;
+
 create table if not exists public.learner_subscriptions (
   id uuid primary key default gen_random_uuid(),
   learner_profile_id uuid not null references public.learner_profiles(id) on delete restrict,
@@ -368,6 +402,27 @@ create table if not exists public.learning_competition_entries (
 create index if not exists learning_competition_entries_score_idx
   on public.learning_competition_entries(competition_id, score desc);
 
+-- Ledger rows are append-only. Reversals are new compensating entries, never edits/deletes.
+create or replace function app.reject_learner_ledger_mutation()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $$
+begin
+  raise exception 'Learner reward ledgers are append-only; record a compensating entry instead';
+end;
+$$;
+
+drop trigger if exists learner_gems_ledger_immutable on public.learner_gems_ledger;
+create trigger learner_gems_ledger_immutable
+before update or delete on public.learner_gems_ledger
+for each row execute function app.reject_learner_ledger_mutation();
+
+drop trigger if exists learner_xp_events_immutable on public.learner_xp_events;
+create trigger learner_xp_events_immutable
+before update or delete on public.learner_xp_events
+for each row execute function app.reject_learner_ledger_mutation();
+
 -- Parent-owned child profiles are created through this RPC, never by accepting a guardian id from the browser.
 create or replace function public.create_child_learner_profile(
   p_first_name text,
@@ -459,6 +514,46 @@ begin
   returning id into learner_id;
 
   return learner_id;
+end;
+$$;
+
+create or replace function public.revoke_learner_guardian_link(
+  p_learner_profile_id uuid,
+  p_guardian_user_id uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = pg_catalog, public, auth
+as $$
+declare
+  actor_id uuid := auth.uid();
+  changed_count integer;
+begin
+  if actor_id is null then raise exception 'Authentication required'; end if;
+  if p_guardian_user_id is null then raise exception 'Guardian user is required'; end if;
+
+  if not exists (
+    select 1 from public.learner_profiles lp
+    where lp.id = p_learner_profile_id
+      and (lp.owner_user_id = actor_id or lp.created_by_user_id = actor_id)
+  ) and actor_id <> p_guardian_user_id then
+    raise exception 'Only the learner owner, profile creator or linked guardian can revoke this relationship';
+  end if;
+
+  update public.learner_guardians
+     set link_status = 'revoked',
+         revoked_at = now(),
+         can_view_progress = false,
+         can_manage_learning = false,
+         can_manage_payments = false,
+         updated_at = now()
+   where learner_profile_id = p_learner_profile_id
+     and guardian_user_id = p_guardian_user_id
+     and link_status <> 'revoked';
+
+  get diagnostics changed_count = row_count;
+  return changed_count > 0;
 end;
 $$;
 
@@ -602,6 +697,18 @@ begin
   if student_row.learner_profile_id is not null
      and student_row.learner_profile_id <> membership_row.learner_profile_id then
     raise exception 'Student roster record is already linked to a different learner identity';
+  end if;
+
+  if student_row.profile_id is not null then
+    update public.learner_profiles
+       set owner_user_id = coalesce(owner_user_id, student_row.profile_id),
+           updated_at = now()
+     where id = membership_row.learner_profile_id
+       and (owner_user_id is null or owner_user_id = student_row.profile_id);
+
+    if not found then
+      raise exception 'Learner identity is already linked to another account';
+    end if;
   end if;
 
   update public.students
@@ -801,7 +908,7 @@ begin
   for update;
   if not found then raise exception 'Learner profile not found'; end if;
 
-  if learner_row.owner_user_id <> actor_id and not exists (
+  if learner_row.owner_user_id is distinct from actor_id and not exists (
     select 1 from public.learner_guardians g
     where g.learner_profile_id = p_learner_profile_id
       and g.guardian_user_id = actor_id
@@ -811,7 +918,19 @@ begin
     raise exception 'Gems redemption permission denied';
   end if;
 
-  if exists (select 1 from public.learner_gems_ledger where idempotency_key = p_idempotency_key) then
+  if exists (
+    select 1 from public.learner_gems_ledger
+    where idempotency_key = p_idempotency_key
+      and learner_profile_id <> p_learner_profile_id
+  ) then
+    raise exception 'Idempotency key is already used by another learner';
+  end if;
+
+  if exists (
+    select 1 from public.learner_gems_ledger
+    where idempotency_key = p_idempotency_key
+      and learner_profile_id = p_learner_profile_id
+  ) then
     return coalesce((
       select sum(amount) from public.learner_gems_ledger
       where learner_profile_id = p_learner_profile_id
@@ -838,6 +957,104 @@ begin
 end;
 $$;
 
+-- SECURITY DEFINER access helpers avoid RLS recursion across the learner/profile/guardian graph.
+-- All client reads still go through RLS; these helpers only evaluate the signed-in subject's relation.
+create or replace function app.can_access_learner_profile(p_learner_profile_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, public, app, auth
+as $$
+  select exists (
+    select 1
+    from public.learner_profiles lp
+    where lp.id = p_learner_profile_id
+      and (
+        lp.owner_user_id = (select auth.uid())
+        or lp.created_by_user_id = (select auth.uid())
+        or exists (
+          select 1
+          from public.learner_guardians g
+          where g.learner_profile_id = lp.id
+            and g.guardian_user_id = (select auth.uid())
+            and g.link_status = 'active'
+        )
+        or exists (
+          select 1
+          from public.learner_school_memberships m
+          where m.learner_profile_id = lp.id
+            and m.membership_status = 'active'
+            and app.has_permission('students.read', m.tenant_id, m.school_id, null)
+        )
+      )
+  );
+$$;
+
+create or replace function app.can_access_learner_billing(p_learner_profile_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, public, app, auth
+as $$
+  select exists (
+    select 1
+    from public.learner_profiles lp
+    where lp.id = p_learner_profile_id
+      and (
+        lp.owner_user_id = (select auth.uid())
+        or exists (
+          select 1
+          from public.learner_guardians g
+          where g.learner_profile_id = lp.id
+            and g.guardian_user_id = (select auth.uid())
+            and g.link_status = 'active'
+            and g.can_manage_payments
+        )
+      )
+  );
+$$;
+
+create or replace function app.can_view_learner_progress(p_learner_profile_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, public, app, auth
+as $$
+  select exists (
+    select 1
+    from public.learner_profiles lp
+    where lp.id = p_learner_profile_id
+      and (
+        lp.owner_user_id = (select auth.uid())
+        or exists (
+          select 1
+          from public.learner_guardians g
+          where g.learner_profile_id = lp.id
+            and g.guardian_user_id = (select auth.uid())
+            and g.link_status = 'active'
+            and g.can_view_progress
+        )
+        or exists (
+          select 1
+          from public.learner_school_memberships m
+          where m.learner_profile_id = lp.id
+            and m.membership_status = 'active'
+            and app.has_permission('students.read', m.tenant_id, m.school_id, null)
+        )
+      )
+  );
+$$;
+
+revoke all on function app.can_access_learner_profile(uuid) from public, anon;
+revoke all on function app.can_access_learner_billing(uuid) from public, anon;
+revoke all on function app.can_view_learner_progress(uuid) from public, anon;
+grant execute on function app.can_access_learner_profile(uuid) to authenticated, myschool_runtime;
+grant execute on function app.can_access_learner_billing(uuid) to authenticated, myschool_runtime;
+grant execute on function app.can_view_learner_progress(uuid) to authenticated, myschool_runtime;
+
 -- RLS and grants: users can read only their own profile, linked children, and explicitly visible activity.
 alter table public.learner_profiles enable row level security;
 alter table public.learner_guardians enable row level security;
@@ -857,82 +1074,33 @@ alter table public.learning_competition_entries enable row level security;
 drop policy if exists learner_profiles_read on public.learner_profiles;
 create policy learner_profiles_read on public.learner_profiles
 for select to authenticated, myschool_runtime
-using (
-  owner_user_id = (select auth.uid())
-  or created_by_user_id = (select auth.uid())
-  or exists (
-    select 1 from public.learner_guardians g
-    where g.learner_profile_id = learner_profiles.id
-      and g.guardian_user_id = (select auth.uid())
-      and g.link_status = 'active'
-  )
-  or exists (
-    select 1 from public.learner_school_memberships m
-    where m.learner_profile_id = learner_profiles.id
-      and m.membership_status = 'active'
-      and app.has_permission('students.read', m.tenant_id, m.school_id, null)
-  )
-);
+using (app.can_access_learner_profile(id));
 
 drop policy if exists learner_guardians_read on public.learner_guardians;
 create policy learner_guardians_read on public.learner_guardians
 for select to authenticated, myschool_runtime
 using (
   guardian_user_id = (select auth.uid())
-  or exists (
-    select 1 from public.learner_profiles lp
-    where lp.id = learner_guardians.learner_profile_id
-      and (lp.owner_user_id = (select auth.uid()) or lp.created_by_user_id = (select auth.uid()))
-  )
+  or app.can_access_learner_profile(learner_profile_id)
 );
 
 drop policy if exists learner_school_memberships_read on public.learner_school_memberships;
 create policy learner_school_memberships_read on public.learner_school_memberships
 for select to authenticated, myschool_runtime
 using (
-  exists (
-    select 1 from public.learner_profiles lp
-    where lp.id = learner_school_memberships.learner_profile_id
-      and (lp.owner_user_id = (select auth.uid()) or lp.created_by_user_id = (select auth.uid()))
-  )
-  or exists (
-    select 1 from public.learner_guardians g
-    where g.learner_profile_id = learner_school_memberships.learner_profile_id
-      and g.guardian_user_id = (select auth.uid())
-      and g.link_status = 'active'
-  )
+  app.can_access_learner_profile(learner_profile_id)
   or app.has_permission('students.read', tenant_id, school_id, null)
 );
 
 drop policy if exists learner_subscriptions_read on public.learner_subscriptions;
 create policy learner_subscriptions_read on public.learner_subscriptions
 for select to authenticated, myschool_runtime
-using (
-  exists (
-    select 1 from public.learner_profiles lp
-    where lp.id = learner_subscriptions.learner_profile_id
-      and lp.owner_user_id = (select auth.uid())
-  )
-  or exists (
-    select 1 from public.learner_guardians g
-    where g.learner_profile_id = learner_subscriptions.learner_profile_id
-      and g.guardian_user_id = (select auth.uid())
-      and g.link_status = 'active'
-      and g.can_manage_payments
-  )
-);
+using (app.can_access_learner_billing(learner_profile_id));
 
 drop policy if exists learner_entitlement_overrides_read on public.learner_entitlement_overrides;
 create policy learner_entitlement_overrides_read on public.learner_entitlement_overrides
 for select to authenticated, myschool_runtime
-using (
-  exists (
-    select 1 from public.learner_profiles lp
-    where lp.id = learner_entitlement_overrides.learner_profile_id
-      and lp.owner_user_id = (select auth.uid())
-  )
-  or app.has_permission('platform.tenants.manage', null, null, null)
-);
+using (app.has_permission('platform.tenants.manage', null, null, null));
 
 drop policy if exists academy_videos_published_read on public.academy_videos;
 create policy academy_videos_published_read on public.academy_videos
@@ -942,19 +1110,7 @@ using (publication_status = 'published' and review_status = 'approved');
 drop policy if exists learner_referral_codes_read on public.learner_referral_codes;
 create policy learner_referral_codes_read on public.learner_referral_codes
 for select to authenticated, myschool_runtime
-using (
-  exists (
-    select 1 from public.learner_profiles lp
-    where lp.id = learner_referral_codes.learner_profile_id
-      and lp.owner_user_id = (select auth.uid())
-  )
-  or exists (
-    select 1 from public.learner_guardians g
-    where g.learner_profile_id = learner_referral_codes.learner_profile_id
-      and g.guardian_user_id = (select auth.uid())
-      and g.link_status = 'active'
-  )
-);
+using (app.can_access_learner_profile(learner_profile_id));
 
 drop policy if exists learner_referral_attributions_read on public.learner_referral_attributions;
 create policy learner_referral_attributions_read on public.learner_referral_attributions
@@ -981,55 +1137,17 @@ using (is_enabled = true and starts_at <= now() and (ends_at is null or ends_at 
 drop policy if exists learner_rewards_read on public.learner_rewards;
 create policy learner_rewards_read on public.learner_rewards
 for select to authenticated, myschool_runtime
-using (
-  exists (
-    select 1 from public.learner_profiles lp
-    where lp.id = learner_rewards.learner_profile_id
-      and lp.owner_user_id = (select auth.uid())
-  )
-  or exists (
-    select 1 from public.learner_guardians g
-    where g.learner_profile_id = learner_rewards.learner_profile_id
-      and g.guardian_user_id = (select auth.uid())
-      and g.link_status = 'active'
-  )
-);
+using (app.can_access_learner_profile(learner_profile_id));
 
 drop policy if exists learner_gems_ledger_read on public.learner_gems_ledger;
 create policy learner_gems_ledger_read on public.learner_gems_ledger
 for select to authenticated, myschool_runtime
-using (
-  exists (
-    select 1 from public.learner_profiles lp
-    where lp.id = learner_gems_ledger.learner_profile_id
-      and lp.owner_user_id = (select auth.uid())
-  )
-  or exists (
-    select 1 from public.learner_guardians g
-    where g.learner_profile_id = learner_gems_ledger.learner_profile_id
-      and g.guardian_user_id = (select auth.uid())
-      and g.link_status = 'active'
-      and g.can_manage_payments
-  )
-);
+using (app.can_access_learner_billing(learner_profile_id));
 
 drop policy if exists learner_xp_events_read on public.learner_xp_events;
 create policy learner_xp_events_read on public.learner_xp_events
 for select to authenticated, myschool_runtime
-using (
-  exists (
-    select 1 from public.learner_profiles lp
-    where lp.id = learner_xp_events.learner_profile_id
-      and lp.owner_user_id = (select auth.uid())
-  )
-  or exists (
-    select 1 from public.learner_guardians g
-    where g.learner_profile_id = learner_xp_events.learner_profile_id
-      and g.guardian_user_id = (select auth.uid())
-      and g.link_status = 'active'
-      and g.can_view_progress
-  )
-);
+using (app.can_view_learner_progress(learner_profile_id));
 
 drop policy if exists learning_competitions_read on public.learning_competitions;
 create policy learning_competitions_read on public.learning_competitions
@@ -1037,7 +1155,16 @@ for select to authenticated, myschool_runtime
 using (
   competition_status in ('scheduled', 'active', 'completed')
   and (
-    competition_scope in ('platform', 'friends')
+    competition_scope = 'platform'
+    or (
+      competition_scope = 'friends'
+      and exists (
+        select 1
+        from public.learning_competition_entries entry
+        where entry.competition_id = learning_competitions.id
+          and app.can_access_learner_profile(entry.learner_profile_id)
+      )
+    )
     or (competition_scope = 'tenant' and tenant_id = app.current_tenant_id())
     or (competition_scope in ('school', 'class') and tenant_id = app.current_tenant_id() and school_id = app.current_school_id())
   )
@@ -1047,15 +1174,10 @@ drop policy if exists learning_competition_entries_read on public.learning_compe
 create policy learning_competition_entries_read on public.learning_competition_entries
 for select to authenticated, myschool_runtime
 using (
-  exists (
-    select 1 from public.learner_profiles lp
-    where lp.id = learning_competition_entries.learner_profile_id
-      and lp.owner_user_id = (select auth.uid())
-  )
+  app.can_access_learner_profile(learner_profile_id)
   or exists (
     select 1 from public.learning_competitions c
     where c.id = learning_competition_entries.competition_id
-      and c.competition_scope in ('platform', 'school')
       and c.privacy_mode = 'public_opt_in'
       and learning_competition_entries.opted_into_leaderboard
   )
@@ -1072,6 +1194,7 @@ to authenticated, myschool_runtime;
 
 revoke all on function public.create_child_learner_profile(text, text, date, text) from public, anon;
 revoke all on function public.create_own_learner_profile(text, text, date) from public, anon;
+revoke all on function public.revoke_learner_guardian_link(uuid, uuid) from public, anon;
 revoke all on function public.request_learner_school_membership(uuid, uuid) from public, anon;
 revoke all on function public.review_learner_school_membership(uuid, text, text) from public, anon;
 revoke all on function public.link_learner_school_roster_record(uuid, uuid) from public, anon;
@@ -1081,6 +1204,7 @@ revoke all on function public.redeem_learner_gems(uuid, bigint, text, text, uuid
 
 grant execute on function public.create_child_learner_profile(text, text, date, text) to authenticated, myschool_runtime;
 grant execute on function public.create_own_learner_profile(text, text, date) to authenticated, myschool_runtime;
+grant execute on function public.revoke_learner_guardian_link(uuid, uuid) to authenticated, myschool_runtime;
 grant execute on function public.request_learner_school_membership(uuid, uuid) to authenticated, myschool_runtime;
 grant execute on function public.review_learner_school_membership(uuid, text, text) to authenticated, myschool_runtime;
 grant execute on function public.link_learner_school_roster_record(uuid, uuid) to authenticated, myschool_runtime;
