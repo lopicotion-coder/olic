@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { extractCurriculumDocument, chunkCurriculumPages } from "./document-parser.ts";
 import { hasValidWorkerToken } from "./worker-auth.ts";
+import { estimateInputTokens, estimateUsdCost } from "./budget-math.ts";
 
 type ProviderName = "openrouter" | "openai" | "gemini" | "xai";
 type Mode = "all" | "ai_requests" | "learner_ai_requests" | "question_generation" | "ingestion" | "embeddings";
@@ -602,14 +603,11 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
         { role: "system", content: tutorSystemPrompt(evidence) },
         { role: "user", content: row.prompt_text },
       ];
-      const estimatedInputTokens = Math.max(
-        1,
-        Math.ceil(messages.reduce((total, message) => total + message.content.length, 0) / 1.5) + 128,
-      );
-      const estimatedCost = (
-        estimatedInputTokens * Number(runtime.input_price_per_million) +
-        maxOutputTokens * Number(runtime.output_price_per_million)
-      ) / 1_000_000;
+      const estimatedInputTokens = estimateInputTokens(messages);
+      const estimatedCost = estimateUsdCost(estimatedInputTokens, maxOutputTokens, {
+        inputPricePerMillion: Number(runtime.input_price_per_million),
+        outputPricePerMillion: Number(runtime.output_price_per_million),
+      });
 
       const { data: reservationData, error: reservationError } = await supabase.rpc(
         "worker_reserve_learner_ai_budget",
@@ -630,10 +628,10 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
       const latencyMs = Date.now() - startedAt;
       const inputTokens = result.promptTokens ?? estimatedInputTokens;
       const outputTokens = result.completionTokens ?? 0;
-      const cost = (
-        inputTokens * Number(runtime.input_price_per_million) +
-        outputTokens * Number(runtime.output_price_per_million)
-      ) / 1_000_000;
+      const cost = estimateUsdCost(inputTokens, outputTokens, {
+        inputPricePerMillion: Number(runtime.input_price_per_million),
+        outputPricePerMillion: Number(runtime.output_price_per_million),
+      });
 
       const { data: savedResponse, error: responseError } = await supabase
         .from("learner_ai_responses")
@@ -780,14 +778,11 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
         { role: "user", content: row.prompt_text },
       ];
 
-      const estimatedInputTokens = Math.max(
-        1,
-        Math.ceil(messages.reduce((total, message) => total + message.content.length, 0) / 1.5) + 128,
-      );
-      const estimatedCost = (
-        estimatedInputTokens * Number(route.input_price_per_million) +
-        maxOutputTokens * Number(route.output_price_per_million)
-      ) / 1_000_000;
+      const estimatedInputTokens = estimateInputTokens(messages);
+      const estimatedCost = estimateUsdCost(estimatedInputTokens, maxOutputTokens, {
+        inputPricePerMillion: Number(route.input_price_per_million),
+        outputPricePerMillion: Number(route.output_price_per_million),
+      });
 
       const { data: reservationData, error: reservationError } = await supabase.rpc("worker_reserve_ai_budget", {
         p_request_id: row.id,
@@ -809,10 +804,10 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
       const result = await callProvider(provider, model, messages, maxOutputTokens);
       const inputTokens = result.promptTokens ?? estimatedInputTokens;
       const outputTokens = result.completionTokens ?? 0;
-      const cost = (
-        inputTokens * Number(route.input_price_per_million) +
-        outputTokens * Number(route.output_price_per_million)
-      ) / 1_000_000;
+      const cost = estimateUsdCost(inputTokens, outputTokens, {
+        inputPricePerMillion: Number(route.input_price_per_million),
+        outputPricePerMillion: Number(route.output_price_per_million),
+      });
 
       const { data: savedResponse, error: responseError } = await supabase.from("ai_responses").upsert({
         request_id: row.id,
