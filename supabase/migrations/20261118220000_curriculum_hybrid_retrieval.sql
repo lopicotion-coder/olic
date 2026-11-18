@@ -67,9 +67,7 @@ begin
   if query_text is null then
     raise exception 'A non-empty curriculum query is required';
   end if;
-  if p_tenant_id is null then
-    raise exception 'A tenant scope is required for school curriculum retrieval';
-  end if;
+  -- NULL tenant means platform-only curriculum retrieval for independent learners.
   if p_limit is null or p_limit < 1 or p_limit > 20 then
     raise exception 'p_limit must be between 1 and 20';
   end if;
