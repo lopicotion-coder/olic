@@ -69,3 +69,16 @@ The 2026-11-18 inspection was read-only against production. No production schema
 - Worker now records spend and completes the request in the same database transaction that releases the budget reservation.
 - Added unit-tested budget estimate helpers and included their tests in GitHub Actions.
 - This remains branch-only and is not deployed. Current production snapshot has zero provider routes and zero AI budget rows; only the existing question-generation Cron is active, and Vault has no registered secrets. A protected recurring Worker scheduler remains to be configured before activation.
+
+ 
+## Feature-branch changes after the production snapshot — 2026-11-19
+The following are implemented on `feature/platform-expansion-plan` and are not yet live:
+- Worker application-token authorization in addition to `verify_jwt=true`.
+- Atomic queue/job claim, retry, curriculum extraction/chunking/embedding and retrieval paths.
+- Tenant/school, independent-learner and background-operation AI spend reservations/events.
+- Unified monthly spend/request caps across interactive and background provider calls.
+- Question-generation strict route/pricing requirements and separate accounting for query/document embeddings.
+- Vault-backed scheduler SQL template; no production Cron entry has been created.
+- GitHub Actions run #41 passed Worker/Gateway type-checks and tests.
+
+Do not interpret these branch changes as deployed production capability. The new budget migration has not been applied, Edge Function source remains the deployed v1 snapshot, and production still has no configured provider routes, AI budgets, Edge Function secrets or Worker schedule. No production writes/deployments were performed during this implementation pass.
