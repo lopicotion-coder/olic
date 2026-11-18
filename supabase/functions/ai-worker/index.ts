@@ -989,7 +989,7 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
       }
 
       if (providerSettlement) {
-        const { error: settlementError } = await supabase.rpc("worker_fail_learner_ai_request_after_provider", {
+        const { data: failureSettled, error: settlementError } = await supabase.rpc("worker_fail_learner_ai_request_after_provider", {
           p_request_id: row.id,
           p_provider_key: providerSettlement.provider,
           p_model_key: providerSettlement.model,
@@ -999,7 +999,15 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
           p_failure_reason: err instanceof Error ? err.message.slice(0, 1000) : "Provider succeeded but response persistence failed",
           p_metadata: { stage: "post_provider_persistence" },
         });
-        if (settlementError) console.error("CRITICAL: provider succeeded but platform AI spend settlement failed", row.id, settlementError);
+        if (settlementError) {
+          console.error("CRITICAL: provider succeeded but platform AI spend settlement failed", row.id, settlementError);
+        } else if (failureSettled === false) {
+          // An event already exists: the normal finalizer may have committed even
+          // though its HTTP/RPC response was lost. Do not overwrite completed state.
+          await archiveQueueMessage("myschool_learner_ai_requests", delivery.msg_id);
+          processed += 1;
+          continue;
+        }
       } else if (reservationCreated) {
         const { error: reservationReleaseError } = await supabase.rpc(
           "worker_release_learner_ai_budget_reservation",
@@ -1189,7 +1197,7 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
       }
 
       if (providerSettlement) {
-        const { error: settlementError } = await supabase.rpc("worker_fail_ai_request_after_provider", {
+        const { data: failureSettled, error: settlementError } = await supabase.rpc("worker_fail_ai_request_after_provider", {
           p_request_id: row.id,
           p_budget_id: providerSettlement.budgetId,
           p_provider_key: providerSettlement.provider,
@@ -1200,7 +1208,15 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
           p_failure_reason: err instanceof Error ? err.message.slice(0, 1000) : "Provider succeeded but response persistence failed",
           p_metadata: { stage: "post_provider_persistence" },
         });
-        if (settlementError) console.error("CRITICAL: provider succeeded but tenant AI spend settlement failed", row.id, settlementError);
+        if (settlementError) {
+          console.error("CRITICAL: provider succeeded but tenant AI spend settlement failed", row.id, settlementError);
+        } else if (failureSettled === false) {
+          // An event already exists: normal finalization may have committed but the
+          // caller lost its response. Preserve the committed state and don't retry.
+          await archiveQueueMessage("myschool_ai_requests", delivery.msg_id);
+          processed += 1;
+          continue;
+        }
       } else if (reservationCreated) {
         const { error: reservationReleaseError } = await supabase.rpc(
           "worker_release_ai_budget_reservation",
