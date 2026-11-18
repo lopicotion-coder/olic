@@ -89,7 +89,6 @@ Do not interpret these branch changes as deployed production capability. The new
 - Added a failure-outcome settlement RPC for background providers. If normal finalization fails after a successful API call, Worker attempts to record actual usage and overrun metadata before releasing the reservation.
 - If both settlement paths fail because the database is unavailable, the reservation remains until expiry and a critical log requires manual reconciliation against provider billing.
 - Output-token fallback now estimates approximately one token per 1.5 characters when provider usage metadata is missing, matching the conservative Arabic prompt estimator.
-- CI run #49 succeeded: Deno type-check plus Worker auth, document parser, budget-math and Gateway auth tests.
 - PostgreSQL migrations have not been executed against an isolated staging branch. The branch-creation tool requires cost approval; do not apply these migrations to production as a substitute.
 
 - Fixed lost-RPC-response idempotency: if a normal chat finalizer committed but its return was lost, the Worker no longer overwrites the already completed request as failed.
@@ -99,3 +98,5 @@ Do not interpret these branch changes as deployed production capability. The new
 - Added a paid-operation completion callback to all Worker paths (QGen, ingestion/queued embeddings, and tenant/platform RAG). Any downstream error after a billed provider call marks the parent job/request terminal instead of issuing a duplicate paid call.
 
 - Release caveat: a hard Worker process termination after provider success but before settlement remains a distributed failure window; no exactly-once guarantee is claimed, and staging must verify reservation expiry/reconciliation before enabling paid AI.
+
+- GitHub Actions run #64 passed: https://github.com/lopicotion-coder/olic/actions/runs/44424098077 (Deno type-check and Worker/parser/budget/auth tests).
