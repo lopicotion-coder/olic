@@ -42,3 +42,10 @@ export function estimateUsdCost(
   ) / 1_000_000;
   return Math.ceil(amount * 100_000_000) / 100_000_000;
 }
+
+export function estimateOutputTokens(text: string): number {
+  if (typeof text !== "string") throw new Error("Output content must be text");
+  if (text.length === 0) return 0;
+  // Conservative fallback for providers that omit usage metadata.
+  return Math.max(1, Math.ceil(text.length / 3));
+}
