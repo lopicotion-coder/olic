@@ -354,6 +354,7 @@ type BackgroundBudgetScope = {
   userId?: string | null;
   featureKey: string;
   operationKind: string;
+  onProviderCompleted?: () => void;
 };
 
 async function reserveBackgroundAiOperation(args: {
@@ -436,6 +437,7 @@ async function callProviderWithBackgroundBudget(
   try {
     providerResult = await callProvider(provider, model, messages, maxOutputTokens);
     providerCompleted = true;
+    scope.onProviderCompleted?.();
     const result = providerResult;
     const inputTokens = result.promptTokens ?? estimatedInputTokens;
     const outputTokens = result.completionTokens ?? estimateOutputTokens(result.content);
@@ -533,6 +535,7 @@ async function generateEmbeddingsWithBackgroundBudget(
   try {
     embeddingResult = await generateEmbeddings(texts);
     providerCompleted = true;
+    scope.onProviderCompleted?.();
     const batch = embeddingResult;
     const inputTokens = batch.promptTokens || estimatedInputTokens;
     const billedAmount = estimateUsdCost(inputTokens, 0, prices);
@@ -733,7 +736,10 @@ async function selectRoute(tenantId: string | null, schoolId: string | null, fea
   return rows.find((row) => row.tenant_id === tenantId && row.school_id === schoolId) ?? rows.find((row) => row.tenant_id === tenantId && row.school_id === null) ?? null;
 }
 
-async function retrieveTutorEvidence(row: AiRequestRow): Promise<{ evidence: CurriculumRetrievalRow[]; embeddingTokens: number }> {
+async function retrieveTutorEvidence(
+  row: AiRequestRow,
+  onProviderCompleted?: () => void,
+): Promise<{ evidence: CurriculumRetrievalRow[]; embeddingTokens: number }> {
   if (!OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is required for curriculum-grounded tutor retrieval");
   }
@@ -752,6 +758,7 @@ async function retrieveTutorEvidence(row: AiRequestRow): Promise<{ evidence: Cur
     userId: row.requester_user_id,
     featureKey: "tutor",
     operationKind: "tenant_rag_query_embedding",
+    onProviderCompleted,
   });
   const queryEmbedding = embeddingBatch.vectors[0];
   const { data, error } = await supabase.rpc("search_curriculum_hybrid", {
@@ -828,6 +835,7 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
     let finalized = false;
     let reservationCreated = false;
     let providerSettlement: { provider: ProviderName; model: string; inputTokens: number; outputTokens: number; billedAmount: number } | null = null;
+    let paidBackgroundCallCompleted = false;
     try {
       const { data: runtimeData, error: runtimeError } = await supabase.rpc("worker_get_platform_ai_runtime");
       dbError("Load platform learner AI runtime settings", runtimeError);
@@ -865,6 +873,7 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
         userId: row.requester_user_id,
         featureKey: "tutor",
         operationKind: "learner_rag_query_embedding",
+        onProviderCompleted: () => { paidBackgroundCallCompleted = true; },
       });
       const queryEmbedding = queryEmbeddingBatch.vectors[0];
       const { data: evidenceData, error: evidenceError } = await supabase.rpc("search_curriculum_hybrid", {
@@ -1014,7 +1023,7 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
       }
 
       failed += 1;
-      const terminal = providerSettlement !== null || Number(row.attempts) >= Number(row.max_attempts);
+      const terminal = providerSettlement !== null || paidBackgroundCallCompleted || isUnsettledPaidProviderError(err) || Number(row.attempts) >= Number(row.max_attempts);
       const { error: releaseError } = await supabase.from("learner_ai_requests").update({
         status: terminal ? "failed" : "queued",
         completed_at: terminal ? new Date().toISOString() : null,
@@ -1058,6 +1067,7 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
     let finalized = false;
     let reservationCreated = false;
     let providerSettlement: { provider: ProviderName; model: string; budgetId: string; inputTokens: number; outputTokens: number; billedAmount: number } | null = null;
+    let paidBackgroundCallCompleted = false;
     try {
       const route = await selectRoute(row.tenant_id, row.school_id, row.feature_key);
       if (!route) throw new Error("AI_PROVIDER_ROUTE_NOT_CONFIGURED");
@@ -1071,7 +1081,7 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
       }
 
       const tutorEvidence = row.feature_key === "tutor"
-        ? await retrieveTutorEvidence(row)
+        ? await retrieveTutorEvidence(row, () => { paidBackgroundCallCompleted = true; })
         : { evidence: [] as CurriculumRetrievalRow[], embeddingTokens: 0 };
       const evidence = tutorEvidence.evidence;
       const messages: GatewayMessage[] = [
@@ -1223,7 +1233,7 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
       }
 
       failed += 1;
-      const terminal = providerSettlement !== null || Number(row.attempts) >= Number(row.max_attempts ?? 3);
+      const terminal = providerSettlement !== null || paidBackgroundCallCompleted || isUnsettledPaidProviderError(err) || Number(row.attempts) >= Number(row.max_attempts ?? 3);
       const delayMinutes = retryDelayMinutes(Number(row.attempts) || 1);
       const { error: retryError } = await supabase.from("ai_requests").update({
         status: terminal ? "failed" : "queued",
@@ -1401,6 +1411,7 @@ async function processQuestionGeneration(limit: number): Promise<{ processed: nu
           userId: null,
           featureKey: "exam_generator",
           operationKind: "question_generation",
+          onProviderCompleted: () => { paidBackgroundCallCompleted = true; },
         });
         const parsed = parseQuestionPayload(response.content);
         const responseHash = await sha256Hex(response.content);
@@ -1668,7 +1679,7 @@ async function processQuestionGeneration(limit: number): Promise<{ processed: nu
       }
 
       failed += 1;
-      const terminal = isUnsettledPaidProviderError(err) || Number(job.attempts) >= Number(job.max_attempts);
+      const terminal = paidBackgroundCallCompleted || isUnsettledPaidProviderError(err) || Number(job.attempts) >= Number(job.max_attempts);
       const { error: releaseError } = await supabase.from("question_generation_jobs").update({
         job_status: terminal ? "failed" : "retrying",
         last_error: err instanceof Error ? err.message.slice(0, 1000) : "Question generation failed",
@@ -1787,6 +1798,7 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
 
     let ingestionFinalized = false;
     let ingestionHandedOff = false;
+    let paidBackgroundCallCompleted = false;
     try {
       const { data: version, error: versionErr } = await supabase
         .from("curriculum_source_versions")
@@ -1907,7 +1919,10 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
           );
           const embeddingBatch = await generateEmbeddingsWithBackgroundBudget(
             chunks.map((chunk) => chunk.content_text),
-            budgetScope,
+            {
+              ...budgetScope,
+              onProviderCompleted: () => { paidBackgroundCallCompleted = true; },
+            },
           );
           const vectors = embeddingBatch.vectors;
           for (let index = 0; index < chunks.length; index += 1) {
@@ -1997,7 +2012,7 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
         continue;
       }
       failed += 1;
-      const terminal = isUnsettledPaidProviderError(err) || Number(job.attempts) >= Number(job.max_attempts);
+      const terminal = paidBackgroundCallCompleted || isUnsettledPaidProviderError(err) || Number(job.attempts) >= Number(job.max_attempts);
       const { error: releaseError } = await supabase.from("curriculum_ingestion_jobs").update({
         job_status: terminal ? "failed" : "retrying",
         last_error: err instanceof Error ? err.message.slice(0, 1000) : "Curriculum ingestion failed",
@@ -2040,6 +2055,7 @@ async function processEmbeddingJobs(limit: number): Promise<{ processed: number;
 
     let handedOff = false;
     let finalized = false;
+    let paidBackgroundCallCompleted = false;
     try {
       const payload = job.payload ?? {};
       let items: Array<{ id: string; text: string }> = [];
@@ -2133,7 +2149,10 @@ async function processEmbeddingJobs(limit: number): Promise<{ processed: number;
         if (!embeddingBudgetScope) throw new Error("EMBEDDING_BUDGET_SCOPE_NOT_AVAILABLE");
         const embeddingBatch = await generateEmbeddingsWithBackgroundBudget(
           items.map((item) => item.text),
-          embeddingBudgetScope,
+          {
+            ...embeddingBudgetScope,
+            onProviderCompleted: () => { paidBackgroundCallCompleted = true; },
+          },
         );
         const vectors = embeddingBatch.vectors;
         const table = job.job_type === "embed_chunks" ? "curriculum_chunks" : "question_bank";
@@ -2207,7 +2226,7 @@ async function processEmbeddingJobs(limit: number): Promise<{ processed: number;
       }
 
       failed += 1;
-      const terminal = isUnsettledPaidProviderError(err) || Number(job.attempts) >= Number(job.max_attempts);
+      const terminal = paidBackgroundCallCompleted || isUnsettledPaidProviderError(err) || Number(job.attempts) >= Number(job.max_attempts);
       const { error: releaseError } = await supabase.from("question_generation_jobs").update({
         job_status: terminal ? "failed" : "retrying",
         last_error: err instanceof Error ? err.message.slice(0, 1000) : "Embedding failed",
