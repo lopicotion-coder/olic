@@ -503,11 +503,6 @@ begin
 end;
 $$;
 
-revoke all on function public.get_learner_practice_set(uuid, text, text, text, integer, smallint, integer)
-  from public, anon;
-revoke all on function public.submit_learner_question_attempt(uuid, uuid, jsonb, text)
-  from public, anon;
-
 create or replace function public.submit_learner_question_attempt(
   p_learner_profile_id uuid,
   p_exposure_id uuid,
