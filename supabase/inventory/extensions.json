@@ -1,15 +1,30 @@
 {
-  "captured_at": "2026-11-17",
+  "captured_at": "2026-11-18",
   "installed": [
     {
-      "name": "uuid-ossp",
+      "name": "pg_cron",
+      "schema": "pg_catalog",
+      "installed_version": "1.6.4"
+    },
+    {
+      "name": "pg_net",
       "schema": "extensions",
-      "installed_version": "1.1"
+      "installed_version": "0.20.4"
+    },
+    {
+      "name": "pg_stat_statements",
+      "schema": "extensions",
+      "installed_version": "1.11"
     },
     {
       "name": "pgcrypto",
       "schema": "extensions",
       "installed_version": "1.3"
+    },
+    {
+      "name": "pgmq",
+      "schema": "pgmq",
+      "installed_version": "1.5.1"
     },
     {
       "name": "plpgsql",
@@ -22,14 +37,14 @@
       "installed_version": "0.3.1"
     },
     {
+      "name": "uuid-ossp",
+      "schema": "extensions",
+      "installed_version": "1.1"
+    },
+    {
       "name": "vector",
       "schema": "extensions",
       "installed_version": "0.8.2"
-    },
-    {
-      "name": "pg_stat_statements",
-      "schema": "extensions",
-      "installed_version": "1.11"
     }
   ]
 }
