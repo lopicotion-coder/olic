@@ -37,3 +37,7 @@ The original SQL bodies for the 40 applied migrations are not currently stored h
 The production frontend source is not present in this repository. UI prototypes are archived separately in `lopicotion-coder/draft` and must not be deployed as production.
 
 This repository is Public. Do not commit secrets, production rows, Auth users, password hashes, identity values, document contents, database credentials, service-role keys, plaintext dumps or private backup archives.
+
+ 
+## Edge Function source control
+Exact snapshots of the currently deployed `ai-gateway` and `ai-worker` functions are checked into `supabase/functions/` on the active feature branch. The worker's internal-token security guard is a proposed branch change only and is not yet deployed to the live project.
