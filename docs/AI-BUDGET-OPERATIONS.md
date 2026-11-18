@@ -90,12 +90,12 @@ The AI Gateway has its own `AI_GATEWAY_INTERNAL_TOKEN` and model allowlists. It 
 - `ai_budget_reservations`: 0 rows.
 - `ai_budget_events`: 0 rows.
 - `ai_background_budget_reservations` / `ai_background_budget_events`: introduced by this branch migration; not yet applied in production.
-- Supabase Vault extension was not enabled in the production project's extension list when checked; `pg_cron` and `pg_net` are enabled.
+- Supabase Vault schema and `vault.decrypted_secrets` are present; no scheduler credentials are registered. `pg_cron` and `pg_net` are enabled.
 - Active Cron jobs: the existing question-generation scheduler only; no AI Worker schedule.
-- `vault.secrets`: no registered secrets.
+- `vault.decrypted_secrets`: no registered scheduler secrets.
 - Deployed `ai-worker` and `ai-gateway` remain at their existing version 1; this feature branch has not been deployed.
 
 Therefore the code is prepared but deliberately fails closed. Do not enable real AI usage until provider prices, limits, secrets, and scheduling are configured and tested in a non-production environment.
 
 
-Background settlement fallback: if a provider responds but normal event finalization fails, the Worker now calls `worker_fail_background_ai_operation` to record the actual provider cost as a failed operation (including over-budget/token-limit metadata) and release the reservation. If that fallback call also fails, it retains the reservation until expiry and emits a critical log for manual reconciliation.
+Background settlement fallback: if a provider responds but normal event finalization fails, the Worker calls `worker_fail_background_ai_operation` to record the actual provider cost as a `completed` provider operation with `settlement_fallback=true` plus over-budget/token-limit metadata, release the reservation, and return the already-generated output to its caller. It does not call the provider again. If both settlement attempts fail, a terminal error prevents automatic job retry; the reservation remains until expiry and a critical log requires manual reconciliation. By contrast, interactive tenant/learner requests whose response persistence fails are recorded as `failed` usage events and marked terminally failed.
