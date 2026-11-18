@@ -430,21 +430,37 @@ async function callProviderWithBackgroundBudget(
   });
 
   let providerCompleted = false;
+  let providerSettlement: { inputTokens: number; outputTokens: number; billedAmount: number } | null = null;
   try {
     const result = await callProvider(provider, model, messages, maxOutputTokens);
     providerCompleted = true;
     const inputTokens = result.promptTokens ?? estimatedInputTokens;
     const outputTokens = result.completionTokens ?? estimateOutputTokens(result.content);
     const billedAmount = estimateUsdCost(inputTokens, outputTokens, prices);
+    providerSettlement = { inputTokens, outputTokens, billedAmount };
     await finalizeBackgroundAiOperation({
       operationKey, provider, model, inputTokens, outputTokens, billedAmount,
       metadata: { fallback_usage_estimate: result.promptTokens == null || result.completionTokens == null },
     });
     return result;
   } catch (err) {
-    // If the provider succeeded but settlement failed, keep the reservation until its
-    // expiry rather than silently releasing spend that may already have occurred.
-    if (!providerCompleted) await releaseBackgroundAiOperation(operationKey);
+    if (!providerCompleted) {
+      await releaseBackgroundAiOperation(operationKey);
+    } else if (providerSettlement) {
+      const { error: failedSettlementError } = await supabase.rpc("worker_fail_background_ai_operation", {
+        p_operation_key: operationKey,
+        p_provider_key: provider,
+        p_model_key: model,
+        p_input_tokens: providerSettlement.inputTokens,
+        p_output_tokens: providerSettlement.outputTokens,
+        p_billed_amount: providerSettlement.billedAmount,
+        p_failure_reason: err instanceof Error ? err.message.slice(0, 1000) : "Background provider result could not be finalized",
+        p_metadata: { stage: "post_provider_settlement" },
+      });
+      if (failedSettlementError) {
+        console.error("CRITICAL: provider succeeded but background AI spend settlement failed", operationKey, failedSettlementError);
+      }
+    }
     throw err;
   }
 }
@@ -502,18 +518,36 @@ async function generateEmbeddingsWithBackgroundBudget(
   if (!reservation?.reservation_id) throw new Error("BACKGROUND_EMBEDDING_BUDGET_RESERVATION_FAILED");
 
   let providerCompleted = false;
+  let providerSettlement: { inputTokens: number; billedAmount: number } | null = null;
   try {
     const batch = await generateEmbeddings(texts);
     providerCompleted = true;
     const inputTokens = batch.promptTokens || estimatedInputTokens;
     const billedAmount = estimateUsdCost(inputTokens, 0, prices);
+    providerSettlement = { inputTokens, billedAmount };
     await finalizeBackgroundAiOperation({
       operationKey, provider, model, inputTokens, outputTokens: 0, billedAmount,
       metadata: { item_count: texts.length, fallback_usage_estimate: batch.promptTokens <= 0 },
     });
     return batch;
   } catch (err) {
-    if (!providerCompleted) await releaseBackgroundAiOperation(operationKey);
+    if (!providerCompleted) {
+      await releaseBackgroundAiOperation(operationKey);
+    } else if (providerSettlement) {
+      const { error: failedSettlementError } = await supabase.rpc("worker_fail_background_ai_operation", {
+        p_operation_key: operationKey,
+        p_provider_key: provider,
+        p_model_key: model,
+        p_input_tokens: providerSettlement.inputTokens,
+        p_output_tokens: 0,
+        p_billed_amount: providerSettlement.billedAmount,
+        p_failure_reason: err instanceof Error ? err.message.slice(0, 1000) : "Embedding provider result could not be finalized",
+        p_metadata: { item_count: texts.length, stage: "post_provider_settlement" },
+      });
+      if (failedSettlementError) {
+        console.error("CRITICAL: provider succeeded but embedding spend settlement failed", operationKey, failedSettlementError);
+      }
+    }
     throw err;
   }
 }
