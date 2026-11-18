@@ -1,6 +1,7 @@
 # My School Supabase snapshot
 
 This folder records a read-only snapshot of the connected My School Supabase project as observed on 2026-11-17.
+A separate production hardening follow-up was applied on 2026-11-18 and is documented in `docs/SECURITY-REVIEW-2026-11-18.md`.
 
 - Project ref: `yigixquioguqnpbfhepi`
 - Region: `eu-west-1`
