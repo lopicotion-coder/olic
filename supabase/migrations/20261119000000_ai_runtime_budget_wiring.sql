@@ -1039,10 +1039,7 @@ begin
   select * into reservation_row from public.ai_budget_reservations r where r.request_id = p_request_id for update;
   if not found or reservation_row.budget_id <> p_budget_id then raise exception 'AI budget reservation missing or scope mismatch'; end if;
   select * into budget_row from public.ai_budgets b where b.id = p_budget_id for update;
-  if not found or not budget_row.is_active then raise exception 'AI budget is no longer active'; end if;
-  if p_input_tokens > budget_row.max_input_tokens or p_output_tokens > budget_row.max_output_tokens then
-    raise exception 'Actual AI token usage exceeds configured limits';
-  end if;
+  if not found then raise exception 'AI budget row no longer exists'; end if;
 
   select coalesce((select sum(e.billed_amount) from public.ai_budget_events e where e.budget_id = p_budget_id and e.created_at >= month_start), 0)
        + coalesce((select sum(e.billed_amount) from public.ai_background_budget_events e where e.budget_id = p_budget_id and e.created_at >= month_start), 0)
@@ -1050,9 +1047,8 @@ begin
   select coalesce((select sum(r.reserved_amount) from public.ai_budget_reservations r where r.budget_id = p_budget_id and r.request_id <> p_request_id and r.expires_at > now()), 0)
        + coalesce((select sum(r.reserved_amount) from public.ai_background_budget_reservations r where r.budget_id = p_budget_id and r.expires_at > now()), 0)
     into other_reserved;
-  if p_billed_amount > budget_row.monthly_budget_amount - spent_amount - other_reserved then
-    raise exception 'Actual failed AI usage would exceed the tenant/school monthly budget';
-  end if;
+  -- The provider already incurred this spend. Record it even if actual usage exceeds
+  -- the reservation or a newly-reduced cap; subsequent reservations will see the overrun.
 
   insert into public.ai_budget_events(
     request_id, budget_id, tenant_id, school_id, user_id, feature_key,
@@ -1061,7 +1057,11 @@ begin
     p_request_id, p_budget_id, reservation_row.tenant_id, reservation_row.school_id,
     reservation_row.user_id, request_row.feature_key, p_input_tokens, p_output_tokens,
     p_billed_amount, budget_row.currency, 'failed',
-    coalesce(p_metadata, '{}'::jsonb) || jsonb_build_object('failure_reason', left(coalesce(p_failure_reason, 'post-provider persistence failure'), 1000))
+    coalesce(p_metadata, '{}'::jsonb) || jsonb_build_object(
+      'failure_reason', left(coalesce(p_failure_reason, 'post-provider persistence failure'), 1000),
+      'budget_overrun', p_billed_amount > budget_row.monthly_budget_amount - spent_amount - other_reserved,
+      'token_limit_exceeded', p_input_tokens > budget_row.max_input_tokens or p_output_tokens > budget_row.max_output_tokens
+    )
   );
 
   update public.ai_requests
@@ -1107,12 +1107,8 @@ begin
   -- already-incurred provider spend still has to be posted.
   select * into settings_row from public.platform_ai_runtime_settings s where s.singleton for update;
   if not found then raise exception 'Platform AI budget settings not found'; end if;
-  if p_provider_key <> settings_row.provider_key or p_model_key <> settings_row.model_key then
-    raise exception 'Learner AI provider route changed before failure settlement';
-  end if;
-  if p_input_tokens > settings_row.max_input_tokens or p_output_tokens > settings_row.max_output_tokens then
-    raise exception 'Actual learner AI token usage exceeds platform limits';
-  end if;
+  -- Do not block settlement if the platform runtime was disabled or its route changed
+  -- after the provider call: the external spend has already happened.
 
   select coalesce((select sum(e.billed_amount) from public.platform_ai_budget_events e where e.created_at >= month_start), 0)
        + coalesce((select sum(e.billed_amount) from public.ai_background_budget_events e where e.budget_id is null and e.created_at >= month_start), 0)
@@ -1120,9 +1116,7 @@ begin
   select coalesce((select sum(r.reserved_amount) from public.platform_ai_budget_reservations r where r.request_id <> p_request_id and r.expires_at > now()), 0)
        + coalesce((select sum(r.reserved_amount) from public.ai_background_budget_reservations r where r.budget_id is null and r.expires_at > now()), 0)
     into other_reserved;
-  if p_billed_amount > settings_row.monthly_budget_amount - spent_amount - other_reserved then
-    raise exception 'Actual failed learner AI usage would exceed the platform monthly budget';
-  end if;
+  -- Record unavoidable external spend even if it exceeds a cap changed after reservation.
 
   insert into public.platform_ai_budget_events(
     request_id, learner_profile_id, requester_user_id, provider_key, model_key,
@@ -1131,7 +1125,11 @@ begin
     p_request_id, request_row.learner_profile_id, request_row.requester_user_id,
     p_provider_key, p_model_key, p_input_tokens, p_output_tokens, p_billed_amount,
     settings_row.currency, 'failed',
-    coalesce(p_metadata, '{}'::jsonb) || jsonb_build_object('failure_reason', left(coalesce(p_failure_reason, 'post-provider persistence failure'), 1000))
+    coalesce(p_metadata, '{}'::jsonb) || jsonb_build_object(
+      'failure_reason', left(coalesce(p_failure_reason, 'post-provider persistence failure'), 1000),
+      'budget_overrun', p_billed_amount > settings_row.monthly_budget_amount - spent_amount - other_reserved,
+      'token_limit_exceeded', p_input_tokens > settings_row.max_input_tokens or p_output_tokens > settings_row.max_output_tokens
+    )
   );
   update public.learner_ai_requests
      set status = 'failed', completed_at = now(), locked_at = null, locked_by = null,
