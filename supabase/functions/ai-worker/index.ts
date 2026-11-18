@@ -1296,6 +1296,7 @@ async function processQuestionGeneration(limit: number): Promise<{ processed: nu
     let finalized = false;
     let accepted = 0;
     let rejected = 0;
+    let paidBackgroundCallCompleted = false;
 
     try {
       if (job.job_type !== "generate_questions") {
