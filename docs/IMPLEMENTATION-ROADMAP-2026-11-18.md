@@ -184,3 +184,15 @@ Every phase must include:
 - Worker now records spend and completes the request in the same database transaction that releases the budget reservation.
 - Added unit-tested budget estimate helpers and included their tests in GitHub Actions.
 - This remains branch-only and is not deployed. Current production snapshot has zero provider routes and zero AI budget rows; only the existing question-generation Cron is active, and Vault has no registered secrets. A protected recurring Worker scheduler remains to be configured before activation.
+
+ 
+## Background AI budget completion — 2026-11-19
+- Added a server-only background operation reservation/event ledger for operations without an `ai_requests` row.
+- Unified tenant/school budget accounting across interactive AI and background provider calls: spend, reserved amounts and monthly request caps include both ledgers.
+- Unified independent-learner/platform accounting across learner chat, RAG query embeddings and shared/global curriculum embedding operations.
+- Added pre-call budget reserve and measured settlement for question generation, curriculum ingestion embeddings, reusable chunk/question embeddings, tenant RAG query embeddings and learner RAG query embeddings.
+- Removed unpriced provider/model fallback from question generation; it now requires an enabled `exam_generator` route with positive USD prices and an output cap.
+- Added output token fallback estimation when the provider does not report usage; over-limit embedding batches are recursively split before provider execution.
+- Added `docs/AI-WORKER-SCHEDULER.sql`, an operator-run Vault + pg_cron + pg_net schedule. It is not executed against production.
+- GitHub Actions run #41 succeeded: Deno type-check of Worker/Gateway and all current Worker/parser/budget/Gateway tests passed.
+- Important limitations: SQL has not been applied or executed against staging; the branch is not deployed; there are no production provider routes/budgets/secrets and no Worker Cron job. Background API work is recorded separately from parent chat usage but shares the same monthly cap. A provider-success/database-settlement outage can leave a reserved amount until expiry; this distributed failure window is documented and should be monitored.
