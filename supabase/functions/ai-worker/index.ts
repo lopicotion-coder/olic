@@ -260,7 +260,9 @@ function vectorLiteral(vector: number[]): string {
 }
 
 async function sha256HexBytes(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
   return Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
@@ -830,6 +832,7 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
         .eq("id", job.source_version_id)
         .single();
       dbError("Load version for ingestion", versionErr);
+      if (!version) throw new Error("CURRICULUM_VERSION_NOT_FOUND");
 
       if (job.stage === "extract" || job.stage === "chunk") {
         if (!version.storage_object_path) throw new Error("SOURCE_FILE_NOT_AVAILABLE: upload a PDF, DOCX or text file to restart ingestion");
