@@ -4,7 +4,7 @@ import { extractCurriculumDocument, chunkCurriculumPages } from "./document-pars
 import { hasValidWorkerToken } from "./worker-auth.ts";
 
 type ProviderName = "openrouter" | "openai" | "gemini" | "xai";
-type Mode = "all" | "ai_requests" | "question_generation" | "ingestion" | "embeddings";
+type Mode = "all" | "ai_requests" | "learner_ai_requests" | "question_generation" | "ingestion" | "embeddings";
 
 type AiRequestRow = {
   id: string;
@@ -150,8 +150,28 @@ type CurriculumRetrievalRow = {
   citation_label: string;
 };
 
+type LearnerAiRequestRow = {
+  id: string;
+  learner_profile_id: string;
+  requester_user_id: string;
+  membership_id: string | null;
+  tenant_id: string | null;
+  school_id: string | null;
+  feature_key: string;
+  subject_code: string | null;
+  grade_code: string | null;
+  source_version_id: string | null;
+  prompt_text: string;
+  input_context: Record<string, unknown>;
+  status: string;
+  attempts: number;
+  max_attempts: number;
+  max_output_tokens: number;
+};
+
 type QueueName =
   | "myschool_ai_requests"
+  | "myschool_learner_ai_requests"
   | "myschool_question_generation"
   | "myschool_curriculum_ingestion"
   | "myschool_embedding";
@@ -505,6 +525,164 @@ function tutorSystemPrompt(evidence: CurriculumRetrievalRow[]): string {
     "Approved curriculum evidence:",
     evidenceText,
   ].join("\n\n");
+}
+
+async function processLearnerAiRequests(limit: number): Promise<{ processed: number; failed: number; skipped: number }> {
+  const deliveries = await readQueue("myschool_learner_ai_requests", limit);
+  const workerId = crypto.randomUUID();
+  let processed = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const delivery of deliveries) {
+    const requestId = String(delivery.message?.learner_ai_request_id ?? "");
+    if (!/^[0-9a-f-]{36}$/i.test(requestId)) {
+      await archiveQueueMessage("myschool_learner_ai_requests", delivery.msg_id);
+      skipped += 1;
+      continue;
+    }
+
+    const { data: claimedData, error: claimError } = await supabase.rpc("worker_claim_learner_ai_request", {
+      p_request_id: requestId,
+      p_worker_id: workerId,
+    });
+    dbError("Claim independent learner AI request", claimError);
+    const row = firstRow<LearnerAiRequestRow>(claimedData);
+    if (!row) {
+      await archiveQueueMessage("myschool_learner_ai_requests", delivery.msg_id);
+      skipped += 1;
+      continue;
+    }
+
+    let finalized = false;
+    try {
+      const route = row.tenant_id
+        ? await selectRoute(row.tenant_id, row.school_id, row.feature_key)
+        : null;
+      const provider = normalizeProvider(route?.provider_key ?? DEFAULT_PROVIDER) ?? DEFAULT_PROVIDER;
+      const model = route?.model_key ?? (
+        provider === "openrouter" ? DEFAULT_MODEL_OPENROUTER :
+        provider === "openai" ? DEFAULT_MODEL_OPENAI :
+        provider === "gemini" ? DEFAULT_MODEL_GEMINI : DEFAULT_MODEL_XAI
+      );
+
+      const [queryEmbedding] = await generateEmbeddings([row.prompt_text]);
+      const { data: evidenceData, error: evidenceError } = await supabase.rpc("search_curriculum_hybrid", {
+        p_query_text: row.prompt_text,
+        p_query_embedding: vectorLiteral(queryEmbedding),
+        p_tenant_id: row.tenant_id,
+        p_school_id: row.school_id,
+        p_subject_code: row.subject_code,
+        p_grade_code: row.grade_code,
+        p_source_version_id: row.source_version_id,
+        p_limit: 8,
+      });
+      dbError("Retrieve curriculum evidence for independent learner", evidenceError);
+      const evidence = (evidenceData ?? []) as CurriculumRetrievalRow[];
+
+      const messages: GatewayMessage[] = [
+        { role: "system", content: tutorSystemPrompt(evidence) },
+        { role: "user", content: row.prompt_text },
+      ];
+      const startedAt = Date.now();
+      const result = await callProvider(provider, model, messages, row.max_output_tokens);
+      const latencyMs = Date.now() - startedAt;
+      const inputTokens = result.promptTokens ?? 0;
+      const outputTokens = result.completionTokens ?? 0;
+      const cost = route
+        ? (
+            inputTokens * Number(route.input_price_per_million) +
+            outputTokens * Number(route.output_price_per_million)
+          ) / 1_000_000
+        : 0;
+
+      const { data: savedResponse, error: responseError } = await supabase
+        .from("learner_ai_responses")
+        .upsert({
+          request_id: row.id,
+          learner_profile_id: row.learner_profile_id,
+          response_text: result.content,
+          response_json: result.raw as Record<string, unknown>,
+          provider_key: provider,
+          model_key: model,
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          cost_amount: cost,
+          latency_ms: latencyMs,
+        }, { onConflict: "request_id" })
+        .select("id")
+        .single();
+      dbError("Save learner AI response", responseError);
+
+      if (evidence.length > 0 && savedResponse?.id) {
+        const evidenceRows = evidence.map((item, index) => ({
+          request_id: row.id,
+          response_id: savedResponse.id,
+          learner_profile_id: row.learner_profile_id,
+          chunk_id: item.chunk_id,
+          retrieval_rank: index + 1,
+          similarity_score: item.similarity_score,
+          source_excerpt: item.content_text.slice(0, 2000),
+          citation_label: item.citation_label,
+          selected_for_answer: true,
+        }));
+        const { error: saveEvidenceError } = await supabase
+          .from("learner_ai_rag_evidence")
+          .upsert(evidenceRows, { onConflict: "request_id,chunk_id" });
+        dbError("Save independent learner RAG citations", saveEvidenceError);
+      }
+
+      const { error: usageError } = await supabase.from("learner_ai_usage").upsert({
+        request_id: row.id,
+        learner_profile_id: row.learner_profile_id,
+        requester_user_id: row.requester_user_id,
+        feature_key: row.feature_key,
+        provider_key: provider,
+        model_key: model,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cost_amount: cost,
+      }, { onConflict: "request_id" });
+      dbError("Save independent learner AI usage", usageError);
+
+      const { error: completeError } = await supabase.from("learner_ai_requests").update({
+        status: "completed",
+        completed_at: new Date().toISOString(),
+        locked_at: null,
+        locked_by: null,
+        last_error: null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", row.id);
+      dbError("Complete independent learner AI request", completeError);
+      finalized = true;
+
+      await archiveQueueMessage("myschool_learner_ai_requests", delivery.msg_id);
+      processed += 1;
+    } catch (err) {
+      if (finalized) {
+        console.error("Learner tutor request completed but queue archive failed", row.id, err);
+        processed += 1;
+        continue;
+      }
+
+      failed += 1;
+      const terminal = Number(row.attempts) >= Number(row.max_attempts);
+      const { error: releaseError } = await supabase.from("learner_ai_requests").update({
+        status: terminal ? "failed" : "queued",
+        completed_at: terminal ? new Date().toISOString() : null,
+        available_at: new Date(Date.now() + retryDelayMinutes(Number(row.attempts)) * 60_000).toISOString(),
+        locked_at: null,
+        locked_by: null,
+        last_error: err instanceof Error ? err.message.slice(0, 1000) : "Learner tutor request failed",
+        updated_at: new Date().toISOString(),
+      }).eq("id", row.id);
+      dbError("Release independent learner AI request", releaseError);
+      await archiveQueueMessage("myschool_learner_ai_requests", delivery.msg_id);
+      console.error("Independent learner tutor request failed", row.id, err);
+    }
+  }
+
+  return { processed, failed, skipped };
 }
 
 async function processAiRequests(limit: number): Promise<{ processed: number; failed: number; skipped: number }> {
@@ -1629,7 +1807,7 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  const allowedModes: Mode[] = ["all", "ai_requests", "question_generation", "ingestion", "embeddings"];
+  const allowedModes: Mode[] = ["all", "ai_requests", "learner_ai_requests", "question_generation", "ingestion", "embeddings"];
   const requestedMode = body.mode ?? url.searchParams.get("mode") ?? "all";
   if (!allowedModes.includes(requestedMode as Mode)) {
     return json({ error: "Invalid worker mode" }, 400);
@@ -1645,6 +1823,7 @@ Deno.serve(async (req: Request) => {
     const finalMode = requestedMode as Mode;
     const result: Record<string, unknown> = { mode: finalMode, limit };
     if (finalMode === "all" || finalMode === "ai_requests") result.ai_requests = await processAiRequests(limit);
+    if (finalMode === "all" || finalMode === "learner_ai_requests") result.learner_ai_requests = await processLearnerAiRequests(limit);
     if (finalMode === "all" || finalMode === "question_generation") result.question_generation = await processQuestionGeneration(limit);
     if (finalMode === "all" || finalMode === "ingestion") result.ingestion = await processIngestionJobs(limit);
     if (finalMode === "all" || finalMode === "embeddings") result.embeddings = await processEmbeddingJobs(limit);
