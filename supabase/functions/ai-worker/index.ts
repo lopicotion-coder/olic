@@ -258,7 +258,9 @@ function retryDelayMinutes(attempts: number): number {
   return Math.min(60, Math.max(1, 2 ** Math.max(0, attempts - 1)));
 }
 
-async function generateEmbeddings(texts: string[]): Promise<number[][]> {
+type EmbeddingBatch = { vectors: number[][]; promptTokens: number };
+
+async function generateEmbeddings(texts: string[]): Promise<EmbeddingBatch> {
   if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is required for 1536-dimensional curriculum embeddings");
   if (texts.length < 1 || texts.length > 64) throw new Error("Embedding batch must contain 1 to 64 texts");
 
@@ -279,12 +281,13 @@ async function generateEmbeddings(texts: string[]): Promise<number[][]> {
   const body = response.body as {
     data?: Array<{ index: number; embedding: number[] }>;
     error?: { message?: string };
+    usage?: { prompt_tokens?: number; total_tokens?: number };
   };
   if (!Array.isArray(body.data) || body.data.length !== texts.length) {
     throw new Error(body.error?.message ?? "Embedding provider returned an incomplete batch");
   }
 
-  return body.data
+  const vectors = body.data
     .sort((a, b) => a.index - b.index)
     .map((item) => {
       if (!Array.isArray(item.embedding) || item.embedding.length !== 1536) {
@@ -292,6 +295,9 @@ async function generateEmbeddings(texts: string[]): Promise<number[][]> {
       }
       return item.embedding;
     });
+  const promptTokens = body.usage?.prompt_tokens ??
+    estimateInputTokens(texts.map((content) => ({ role: "user" as const, content })));
+  return { vectors, promptTokens };
 }
 
 function vectorLiteral(vector: number[]): string {
@@ -327,6 +333,8 @@ const DEFAULT_MODEL_OPENAI = Deno.env.get("AI_GATEWAY_DEFAULT_MODEL_OPENAI") ?? 
 const DEFAULT_MODEL_GEMINI = Deno.env.get("AI_GATEWAY_DEFAULT_MODEL_GEMINI") ?? "gemini-2.5-flash";
 const DEFAULT_MODEL_XAI = Deno.env.get("AI_GATEWAY_DEFAULT_MODEL_XAI") ?? "grok-4.7";
 const APP_NAME = Deno.env.get("AI_GATEWAY_APP_NAME") ?? "My School AI Gateway";
+
+const EMBEDDING_PRICE_PER_MILLION = Number(Deno.env.get("AI_EMBEDDING_PRICE_PER_MILLION") ?? "0");
 
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -473,9 +481,12 @@ async function selectRoute(tenantId: string | null, schoolId: string | null, fea
   return rows.find((row) => row.tenant_id === tenantId && row.school_id === schoolId) ?? rows.find((row) => row.tenant_id === tenantId && row.school_id === null) ?? null;
 }
 
-async function retrieveTutorEvidence(row: AiRequestRow): Promise<CurriculumRetrievalRow[]> {
+async function retrieveTutorEvidence(row: AiRequestRow): Promise<{ evidence: CurriculumRetrievalRow[]; embeddingTokens: number }> {
   if (!OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is required for curriculum-grounded tutor retrieval");
+  }
+  if (!Number.isFinite(EMBEDDING_PRICE_PER_MILLION) || EMBEDDING_PRICE_PER_MILLION <= 0) {
+    throw new Error("AI_EMBEDDING_PRICE_PER_MILLION must be configured before RAG requests can run");
   }
 
   const context = row.input_context ?? {};
@@ -483,7 +494,8 @@ async function retrieveTutorEvidence(row: AiRequestRow): Promise<CurriculumRetri
   const gradeCode = typeof context.grade_code === "string" ? context.grade_code : null;
   const sourceVersionId = typeof context.source_version_id === "string" ? context.source_version_id : null;
 
-  const [queryEmbedding] = await generateEmbeddings([row.prompt_text]);
+  const embeddingBatch = await generateEmbeddings([row.prompt_text]);
+  const queryEmbedding = embeddingBatch.vectors[0];
   const { data, error } = await supabase.rpc("search_curriculum_hybrid", {
     p_query_text: row.prompt_text,
     p_query_embedding: vectorLiteral(queryEmbedding),
@@ -495,7 +507,7 @@ async function retrieveTutorEvidence(row: AiRequestRow): Promise<CurriculumRetri
     p_limit: 8,
   });
   dbError("Retrieve approved curriculum evidence", error);
-  return (data ?? []) as CurriculumRetrievalRow[];
+  return { evidence: (data ?? []) as CurriculumRetrievalRow[], embeddingTokens: embeddingBatch.promptTokens };
 }
 
 function tutorSystemPrompt(evidence: CurriculumRetrievalRow[]): string {
@@ -585,7 +597,11 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
         throw new Error("PLATFORM_AI_OUTPUT_TOKEN_LIMIT_INVALID");
       }
 
-      const [queryEmbedding] = await generateEmbeddings([row.prompt_text]);
+      if (!Number.isFinite(EMBEDDING_PRICE_PER_MILLION) || EMBEDDING_PRICE_PER_MILLION <= 0) {
+        throw new Error("AI_EMBEDDING_PRICE_PER_MILLION must be configured before learner RAG requests can run");
+      }
+      const queryEmbeddingBatch = await generateEmbeddings([row.prompt_text]);
+      const queryEmbedding = queryEmbeddingBatch.vectors[0];
       const { data: evidenceData, error: evidenceError } = await supabase.rpc("search_curriculum_hybrid", {
         p_query_text: row.prompt_text,
         p_query_embedding: vectorLiteral(queryEmbedding),
@@ -607,6 +623,9 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
       const estimatedCost = estimateUsdCost(estimatedInputTokens, maxOutputTokens, {
         inputPricePerMillion: Number(runtime.input_price_per_million),
         outputPricePerMillion: Number(runtime.output_price_per_million),
+      }) + estimateUsdCost(queryEmbeddingBatch.promptTokens, 0, {
+        inputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
+        outputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
       });
 
       const { data: reservationData, error: reservationError } = await supabase.rpc(
@@ -631,6 +650,9 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
       const cost = estimateUsdCost(inputTokens, outputTokens, {
         inputPricePerMillion: Number(runtime.input_price_per_million),
         outputPricePerMillion: Number(runtime.output_price_per_million),
+      }) + estimateUsdCost(queryEmbeddingBatch.promptTokens, 0, {
+        inputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
+        outputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
       });
 
       const { data: savedResponse, error: responseError } = await supabase
@@ -767,7 +789,10 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
         throw new Error("AI_PROVIDER_ROUTE_PRICING_OR_TOKEN_LIMIT_INVALID");
       }
 
-      const evidence = row.feature_key === "tutor" ? await retrieveTutorEvidence(row) : [];
+      const tutorEvidence = row.feature_key === "tutor"
+        ? await retrieveTutorEvidence(row)
+        : { evidence: [] as CurriculumRetrievalRow[], embeddingTokens: 0 };
+      const evidence = tutorEvidence.evidence;
       const messages: GatewayMessage[] = [
         {
           role: "system",
@@ -782,7 +807,12 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
       const estimatedCost = estimateUsdCost(estimatedInputTokens, maxOutputTokens, {
         inputPricePerMillion: Number(route.input_price_per_million),
         outputPricePerMillion: Number(route.output_price_per_million),
-      });
+      }) + (tutorEvidence.embeddingTokens > 0
+        ? estimateUsdCost(tutorEvidence.embeddingTokens, 0, {
+            inputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
+            outputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
+          })
+        : 0);
 
       const { data: reservationData, error: reservationError } = await supabase.rpc("worker_reserve_ai_budget", {
         p_request_id: row.id,
@@ -807,7 +837,12 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
       const cost = estimateUsdCost(inputTokens, outputTokens, {
         inputPricePerMillion: Number(route.input_price_per_million),
         outputPricePerMillion: Number(route.output_price_per_million),
-      });
+      }) + (tutorEvidence.embeddingTokens > 0
+        ? estimateUsdCost(tutorEvidence.embeddingTokens, 0, {
+            inputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
+            outputPricePerMillion: EMBEDDING_PRICE_PER_MILLION,
+          })
+        : 0);
 
       const { data: savedResponse, error: responseError } = await supabase.from("ai_responses").upsert({
         request_id: row.id,
@@ -1558,7 +1593,8 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
         dbError("Load chunks for embedding", chunksError);
 
         if (chunks && chunks.length > 0) {
-          const vectors = await generateEmbeddings(chunks.map((chunk) => chunk.content_text));
+          const embeddingBatch = await generateEmbeddings(chunks.map((chunk) => chunk.content_text));
+          const vectors = embeddingBatch.vectors;
           for (let index = 0; index < chunks.length; index += 1) {
             const { error: embeddingUpdateError } = await supabase.from("curriculum_chunks").update({
               embedding: vectorLiteral(vectors[index]),
@@ -1753,7 +1789,8 @@ async function processEmbeddingJobs(limit: number): Promise<{ processed: number;
       }
 
       if (items.length > 0) {
-        const vectors = await generateEmbeddings(items.map((item) => item.text));
+        const embeddingBatch = await generateEmbeddings(items.map((item) => item.text));
+        const vectors = embeddingBatch.vectors;
         const table = job.job_type === "embed_chunks" ? "curriculum_chunks" : "question_bank";
         for (let index = 0; index < items.length; index += 1) {
           const { error: updateError } = await supabase.from(table).update({
