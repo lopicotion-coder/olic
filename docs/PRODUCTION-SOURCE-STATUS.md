@@ -1,6 +1,6 @@
 # My School — production source recovery status
 
-Snapshot date: 2026-11-17.
+Snapshot date: 2026-11-18.
 
 ## Confirmed production database
 
@@ -10,8 +10,8 @@ The connected Supabase project matching My School's school/tenant/student/guardi
 - Region: `eu-west-1`
 - PostgreSQL: `17.11.0.018`
 - Status at inspection: `ACTIVE_HEALTHY`
-- Applied migration history: 30 entries
-- Public/app table inventory: 100 entries
+- Applied migration history: 40 entries
+- Public/app table inventory: 115 entries
 - Storage buckets: 1 private bucket (`school-files`)
 - Deployed Edge Functions observed: 0
 
@@ -20,6 +20,10 @@ The separate project `nhkorcyonlvvfnufwycf` is Selsep EDU and must not be merged
 ## Hardening follow-up
 
 A production hardening follow-up was applied on 2026-11-18 and is documented separately in `docs/SECURITY-REVIEW-2026-11-18.md`.
+
+## Phase 9 AI curriculum foundation
+
+Six additive migrations were applied on 2026-11-18. They add curriculum source/edition rights, vectorized curriculum chunks, a question bank with protected answer keys, question-source grounding, student exposure/attempt records, generation batches and schedules, worker queues, ingestion jobs, quality checks, and AI RAG evidence. All 15 new public tables have RLS enabled and forced. The minute scheduler enqueues due work. Edge Functions and provider credentials remain pending.
 
 That follow-up did **not** recover the frontend/application source. It only tightened the live Supabase database/backend path and then verified the expected post-conditions.
 
@@ -45,7 +49,8 @@ It is not verified as the source that powers the production My School applicatio
 3. A tested full database archive and byte-for-byte Storage object archive.
 4. Verification of restore into a separate test project.
 5. Auth provider configuration, SMTP/OAuth configuration, and production secrets (these must be configured outside Git and stored in secret managers).
-6. Final Vercel/Cloudflare deployment configuration and a verified rollback procedure.
+6. AI/ingestion Edge Workers, API secrets and live provider tests for OpenRouter, OpenAI, Gemini, and xAI.
+7. Final Vercel/Cloudflare deployment configuration and a verified rollback procedure.
 
 ## Safety and scope
 
