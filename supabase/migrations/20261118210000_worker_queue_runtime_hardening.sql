@@ -23,6 +23,13 @@ alter table public.question_generation_jobs
   add column if not exists locked_at timestamptz,
   add column if not exists locked_by text;
 
+alter table public.curriculum_ingestion_jobs
+  add column if not exists idempotency_key text;
+
+create unique index if not exists curriculum_ingestion_jobs_idempotency_key_uidx
+  on public.curriculum_ingestion_jobs (idempotency_key)
+  where idempotency_key is not null;
+
 -- Publish one small, idempotency-addressable pointer per AI request. Never enqueue prompts or PII.
 create or replace function app.publish_ai_request()
 returns trigger
