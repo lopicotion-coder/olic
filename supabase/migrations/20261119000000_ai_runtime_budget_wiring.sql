@@ -695,7 +695,7 @@ returns table (
 language plpgsql
 security definer
 set search_path = pg_catalog, public
-as $
+as $$
 declare
   budget_row public.ai_budgets%rowtype;
   platform_row public.platform_ai_runtime_settings%rowtype;
@@ -729,8 +729,10 @@ begin
    for update;
   if found then
     if reservation_row.tenant_id is distinct from p_tenant_id
-       or reservation_row.school_id is distinct from p_school_id then
-      raise exception 'Background operation key is already reserved for another scope';
+       or reservation_row.school_id is distinct from p_school_id
+       or reservation_row.provider_key <> p_provider_key
+       or reservation_row.model_key <> p_model_key then
+      raise exception 'Background operation key is already reserved for a different scope or provider route';
     end if;
     return query select reservation_row.id,
       case when reservation_row.budget_id is null then
@@ -759,9 +761,11 @@ begin
      for update;
     if not found then raise exception 'No active AI budget is configured for this background operation'; end if;
     if budget_row.currency <> 'USD' then raise exception 'AI background provider prices must be USD'; end if;
-    if p_estimated_input_tokens > budget_row.max_input_tokens
-       or p_requested_output_tokens > budget_row.max_output_tokens then
-      raise exception 'Background operation exceeds the tenant AI token limits';
+    if p_estimated_input_tokens > budget_row.max_input_tokens then
+      raise exception 'Background operation exceeds the input token limit';
+    end if;
+    if p_requested_output_tokens > budget_row.max_output_tokens then
+      raise exception 'Background operation exceeds the output token limit';
     end if;
 
     select
@@ -817,9 +821,11 @@ begin
     raise exception 'Platform AI runtime is disabled; shared/global background AI operations are blocked';
   end if;
   if platform_row.currency <> 'USD' then raise exception 'Platform background AI budget must be USD'; end if;
-  if p_estimated_input_tokens > platform_row.max_input_tokens
-     or p_requested_output_tokens > platform_row.max_output_tokens then
-    raise exception 'Background operation exceeds the platform AI token limits';
+  if p_estimated_input_tokens > platform_row.max_input_tokens then
+    raise exception 'Background operation exceeds the input token limit';
+  end if;
+  if p_requested_output_tokens > platform_row.max_output_tokens then
+    raise exception 'Background operation exceeds the output token limit';
   end if;
 
   select
@@ -828,6 +834,9 @@ begin
     +
     (select count(*) from public.ai_background_budget_events e
       where e.budget_id is null and e.created_at >= month_start)
+    +
+    (select count(*) from public.ai_background_budget_reservations r
+      where r.budget_id is null and r.expires_at > now())
     into request_count;
   if request_count >= platform_row.monthly_request_limit then
     raise exception 'The monthly platform AI request limit has been reached';
@@ -862,7 +871,7 @@ begin
   ) returning * into reservation_row;
   return query select reservation_row.id, platform_row.max_input_tokens, platform_row.max_output_tokens, platform_row.currency;
 end;
-$;
+$$;
 
 create or replace function public.worker_finalize_background_ai_operation(
   p_operation_key text,
@@ -877,7 +886,7 @@ returns boolean
 language plpgsql
 security definer
 set search_path = pg_catalog, public
-as $
+as $$
 declare
   reservation_row public.ai_background_budget_reservations%rowtype;
   budget_row public.ai_budgets%rowtype;
@@ -968,14 +977,14 @@ begin
   delete from public.ai_background_budget_reservations where operation_key = p_operation_key;
   return true;
 end;
-$;
+$$;
 
 create or replace function public.worker_release_background_ai_operation(p_operation_key text)
 returns boolean
 language plpgsql
 security definer
 set search_path = pg_catalog, public
-as $
+as $$
 declare
   deleted_count integer;
 begin
@@ -983,7 +992,7 @@ begin
   get diagnostics deleted_count = row_count;
   return deleted_count > 0;
 end;
-$;
+$$;
 
 revoke all on function public.worker_reserve_background_ai_operation(text, uuid, uuid, uuid, text, text, text, text, numeric, integer, integer, jsonb)
   from public, anon, authenticated, myschool_runtime;
