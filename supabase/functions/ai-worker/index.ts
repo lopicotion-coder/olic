@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { extractCurriculumDocument, chunkCurriculumPages } from "./document-parser.ts";
 import { hasValidWorkerToken } from "./worker-auth.ts";
+import { isUnsettledPaidProviderError } from "./background-budget-errors.ts";
 import { estimateInputTokens, estimateOutputTokens, estimateUsdCost } from "./budget-math.ts";
 
 type ProviderName = "openrouter" | "openai" | "gemini" | "xai";
@@ -410,10 +411,6 @@ async function releaseBackgroundAiOperation(operationKey: string): Promise<void>
     p_operation_key: operationKey,
   });
   if (error) console.error("Could not release unused background AI reservation", operationKey, error);
-}
-
-function isUnsettledPaidProviderError(error: unknown): boolean {
-  return error instanceof Error && error.message.startsWith("BACKGROUND_AI_SETTLEMENT_UNAVAILABLE_AFTER_PROVIDER_SUCCESS:");
 }
 
 async function callProviderWithBackgroundBudget(
