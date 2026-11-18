@@ -1,9 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { extractCurriculumDocument, chunkCurriculumPages } from "./document-parser.ts";
 import { hasValidWorkerToken } from "./worker-auth.ts";
 
 type ProviderName = "openrouter" | "openai" | "gemini" | "xai";
-type Mode = "all" | "ai_requests" | "question_generation" | "ingestion";
+type Mode = "all" | "ai_requests" | "question_generation" | "ingestion" | "embeddings";
 
 type AiRequestRow = {
   id: string;
@@ -34,6 +35,9 @@ type ProviderRouteRow = {
   priority: number;
   timeout_ms: number;
   max_output_tokens: number;
+  timeout_ms: number;
+  input_price_per_million: number;
+  output_price_per_million: number;
 };
 
 type QuestionJobRow = {
@@ -123,6 +127,139 @@ type ProviderResponse = {
 };
 
 type GatewayMessage = { role: "system" | "user" | "assistant"; content: string };
+
+type QueueName =
+  | "myschool_ai_requests"
+  | "myschool_question_generation"
+  | "myschool_curriculum_ingestion"
+  | "myschool_embedding";
+
+type QueueDelivery = {
+  msg_id: number | string;
+  read_ct: number;
+  message: Record<string, unknown>;
+};
+
+function dbError(operation: string, error: { message?: string } | null): void {
+  if (error) throw new Error(`${operation}: ${error.message ?? "database operation failed"}`);
+}
+
+function firstRow<T>(value: unknown): T | null {
+  if (Array.isArray(value)) return (value[0] as T | undefined) ?? null;
+  return value && typeof value === "object" ? value as T : null;
+}
+
+async function readQueue(queue: QueueName, limit: number): Promise<QueueDelivery[]> {
+  const { data, error } = await supabase.rpc("worker_read_queue", {
+    p_queue_name: queue,
+    p_limit: limit,
+    p_visibility_timeout_seconds: 900,
+  });
+  dbError(`Read queue ${queue}`, error);
+  return (data ?? []) as QueueDelivery[];
+}
+
+async function archiveQueueMessage(queue: QueueName, messageId: number | string): Promise<void> {
+  const { data, error } = await supabase.rpc("worker_archive_queue_message", {
+    p_queue_name: queue,
+    p_msg_id: String(messageId),
+  });
+  dbError(`Archive queue message from ${queue}`, error);
+  if (data !== true) throw new Error(`Queue message ${messageId} was not archived`);
+}
+
+async function claimAiRequest(id: string, workerId: string): Promise<AiRequestRow | null> {
+  const { data, error } = await supabase.rpc("worker_claim_ai_request", {
+    p_request_id: id,
+    p_worker_id: workerId,
+  });
+  dbError("Claim AI request", error);
+  return firstRow<AiRequestRow>(data);
+}
+
+async function claimQuestionJob(id: string, workerId: string): Promise<QuestionJobRow | null> {
+  const { data, error } = await supabase.rpc("worker_claim_question_generation_job", {
+    p_job_id: id,
+    p_worker_id: workerId,
+  });
+  dbError("Claim question job", error);
+  return firstRow<QuestionJobRow>(data);
+}
+
+async function claimIngestionJob(id: string, workerId: string): Promise<{
+  id: string;
+  source_version_id: string;
+  job_status: string;
+  stage: string;
+  attempts: number;
+  max_attempts: number;
+  metadata: Record<string, unknown>;
+} | null> {
+  const { data, error } = await supabase.rpc("worker_claim_curriculum_ingestion_job", {
+    p_job_id: id,
+    p_worker_id: workerId,
+  });
+  dbError("Claim curriculum ingestion job", error);
+  return firstRow(data);
+}
+
+function retryDelayMinutes(attempts: number): number {
+  return Math.min(60, Math.max(1, 2 ** Math.max(0, attempts - 1)));
+}
+
+async function generateEmbeddings(texts: string[]): Promise<number[][]> {
+  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is required for 1536-dimensional curriculum embeddings");
+  if (texts.length < 1 || texts.length > 64) throw new Error("Embedding batch must contain 1 to 64 texts");
+
+  const response = await callJson("https://api.openai.com/v1/embeddings", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: "text-embedding-3-small",
+      dimensions: 1536,
+      input: texts,
+    }),
+  }, 90_000);
+
+  if (!response.ok) throw new Error(`Embedding provider returned HTTP ${response.status}`);
+  const body = response.body as {
+    data?: Array<{ index: number; embedding: number[] }>;
+    error?: { message?: string };
+  };
+  if (!Array.isArray(body.data) || body.data.length !== texts.length) {
+    throw new Error(body.error?.message ?? "Embedding provider returned an incomplete batch");
+  }
+
+  return body.data
+    .sort((a, b) => a.index - b.index)
+    .map((item) => {
+      if (!Array.isArray(item.embedding) || item.embedding.length !== 1536) {
+        throw new Error("Embedding provider returned a vector with an unexpected dimension");
+      }
+      return item.embedding;
+    });
+}
+
+function vectorLiteral(vector: number[]): string {
+  if (vector.length !== 1536 || vector.some((value) => !Number.isFinite(value))) {
+    throw new Error("Invalid vector for curriculum storage");
+  }
+  return `[${vector.join(",")}]`;
+}
+
+async function sha256HexBytes(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256HexText(value: string): Promise<string> {
+  return await sha256Hex(value);
+}
+
+
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -267,7 +404,7 @@ async function callProvider(provider: ProviderName, model: string, messages: Gat
 async function selectRoute(tenantId: string | null, schoolId: string | null, featureKey: string): Promise<ProviderRouteRow | null> {
   const { data, error } = await supabase
     .from("ai_provider_routes")
-    .select("id,tenant_id,school_id,feature_key,provider_key,model_key,enabled,priority,timeout_ms,max_output_tokens")
+    .select("id,tenant_id,school_id,feature_key,provider_key,model_key,enabled,priority,timeout_ms,max_output_tokens,input_price_per_million,output_price_per_million")
     .eq("feature_key", featureKey)
     .eq("enabled", true)
     .order("priority", { ascending: true })
@@ -277,76 +414,120 @@ async function selectRoute(tenantId: string | null, schoolId: string | null, fea
   return rows.find((row) => row.tenant_id === tenantId && row.school_id === schoolId) ?? rows.find((row) => row.tenant_id === tenantId && row.school_id === null) ?? null;
 }
 
-async function processAiRequests(limit: number): Promise<{ processed: number; failed: number }> {
-  const { data, error } = await supabase
-    .from("ai_requests")
-    .select("id,tenant_id,school_id,requester_user_id,feature_key,provider_key,model_key,prompt_text,input_context,status,safety_status,tokens_in,tokens_out,cost_amount,created_at")
-    .eq("status", "queued")
-    .order("created_at", { ascending: true })
-    .limit(limit);
-  if (error) throw error;
-
+async function processAiRequests(limit: number): Promise<{ processed: number; failed: number; skipped: number }> {
+  const deliveries = await readQueue("myschool_ai_requests", limit);
+  const workerId = crypto.randomUUID();
   let processed = 0;
   let failed = 0;
-  for (const row of (data ?? []) as AiRequestRow[]) {
-    const route = await selectRoute(row.tenant_id, row.school_id, row.feature_key);
-    const provider = normalizeProvider(route?.provider_key ?? row.provider_key ?? DEFAULT_PROVIDER) ?? DEFAULT_PROVIDER;
-    const model = route?.model_key ?? row.model_key ?? (provider === "openrouter" ? DEFAULT_MODEL_OPENROUTER : provider === "openai" ? DEFAULT_MODEL_OPENAI : provider === "gemini" ? DEFAULT_MODEL_GEMINI : DEFAULT_MODEL_XAI);
-    const maxOutputTokens = route?.max_output_tokens ?? 2048;
-    const messages: GatewayMessage[] = [
-      { role: "system", content: "You are My School's internal assistant. Follow the school policy and answer using the least amount of tokens required." },
-      { role: "user", content: row.prompt_text },
-    ];
+  let skipped = 0;
+
+  for (const delivery of deliveries) {
+    const requestId = String(delivery.message?.ai_request_id ?? "");
+    if (!/^[0-9a-f-]{36}$/i.test(requestId)) {
+      await archiveQueueMessage("myschool_ai_requests", delivery.msg_id);
+      skipped += 1;
+      continue;
+    }
+
+    const row = await claimAiRequest(requestId, workerId);
+    if (!row) {
+      await archiveQueueMessage("myschool_ai_requests", delivery.msg_id);
+      skipped += 1;
+      continue;
+    }
+
     try {
-      await supabase.from("ai_requests").update({ status: "processing" }).eq("id", row.id);
+      const route = await selectRoute(row.tenant_id, row.school_id, row.feature_key);
+      const provider = normalizeProvider(route?.provider_key ?? row.provider_key ?? DEFAULT_PROVIDER) ?? DEFAULT_PROVIDER;
+      const model = route?.model_key ?? row.model_key ?? (
+        provider === "openrouter" ? DEFAULT_MODEL_OPENROUTER :
+        provider === "openai" ? DEFAULT_MODEL_OPENAI :
+        provider === "gemini" ? DEFAULT_MODEL_GEMINI : DEFAULT_MODEL_XAI
+      );
+      const maxOutputTokens = route?.max_output_tokens ?? 2048;
+      const messages: GatewayMessage[] = [
+        { role: "system", content: "You are My School's internal assistant. Follow school policy and answer using the least amount of tokens required." },
+        { role: "user", content: row.prompt_text },
+      ];
+
       const result = await callProvider(provider, model, messages, maxOutputTokens);
-      await supabase.from("ai_responses").insert({
+      const inputTokens = result.promptTokens ?? 0;
+      const outputTokens = result.completionTokens ?? 0;
+      const cost = route
+        ? (inputTokens * Number(route.input_price_per_million) + outputTokens * Number(route.output_price_per_million)) / 1_000_000
+        : 0;
+
+      const { error: responseError } = await supabase.from("ai_responses").upsert({
         request_id: row.id,
         tenant_id: row.tenant_id,
         school_id: row.school_id,
         response_text: result.content,
         response_json: result.raw as Record<string, unknown>,
-      });
-      await supabase.from("ai_usage").insert({
+      }, { onConflict: "request_id" });
+      dbError("Save AI response", responseError);
+
+      const { data: existingUsage, error: usageLookupError } = await supabase
+        .from("ai_usage")
+        .select("id")
+        .eq("request_id", row.id)
+        .limit(1)
+        .maybeSingle();
+      dbError("Check AI usage", usageLookupError);
+
+      const usage = {
         request_id: row.id,
         tenant_id: row.tenant_id,
         school_id: row.school_id,
         user_id: row.requester_user_id,
         feature_key: row.feature_key,
-        input_tokens: result.promptTokens ?? 0,
-        output_tokens: result.completionTokens ?? 0,
-        cost_amount: 0,
-      });
-      await supabase.from("ai_requests").update({
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cost_amount: cost,
+      };
+      if (existingUsage?.id) {
+        const { error: updateUsageError } = await supabase.from("ai_usage").update(usage).eq("id", existingUsage.id);
+        dbError("Update AI usage", updateUsageError);
+      } else {
+        const { error: insertUsageError } = await supabase.from("ai_usage").insert(usage);
+        dbError("Insert AI usage", insertUsageError);
+      }
+
+      const { error: completeError } = await supabase.from("ai_requests").update({
         status: "completed",
         model_key: model,
         provider_key: provider,
-        tokens_in: result.promptTokens ?? row.tokens_in ?? 0,
-        tokens_out: result.completionTokens ?? row.tokens_out ?? 0,
+        tokens_in: inputTokens,
+        tokens_out: outputTokens,
+        cost_amount: cost,
         completed_at: new Date().toISOString(),
+        locked_at: null,
+        locked_by: null,
+        last_error: null,
       }).eq("id", row.id);
+      dbError("Complete AI request", completeError);
+
+      await archiveQueueMessage("myschool_ai_requests", delivery.msg_id);
       processed += 1;
     } catch (err) {
       failed += 1;
-      await supabase.from("ai_requests").update({
-        status: "failed",
-        safety_status: "failed",
-        completed_at: new Date().toISOString(),
+      const terminal = Number(row.attempts) >= Number((row as unknown as { max_attempts?: number }).max_attempts ?? 3);
+      const delayMinutes = retryDelayMinutes(Number(row.attempts) || 1);
+      const { error: retryError } = await supabase.from("ai_requests").update({
+        status: terminal ? "failed" : "queued",
+        safety_status: terminal ? "failed" : "pending",
+        completed_at: terminal ? new Date().toISOString() : null,
+        available_at: new Date(Date.now() + delayMinutes * 60_000).toISOString(),
+        locked_at: null,
+        locked_by: null,
+        last_error: err instanceof Error ? err.message.slice(0, 1000) : "AI request failed",
       }).eq("id", row.id);
-      await supabase.from("ai_usage").insert({
-        request_id: row.id,
-        tenant_id: row.tenant_id,
-        school_id: row.school_id,
-        user_id: row.requester_user_id,
-        feature_key: row.feature_key,
-        input_tokens: 0,
-        output_tokens: 0,
-        cost_amount: 0,
-      });
+      dbError("Release failed AI request", retryError);
+      await archiveQueueMessage("myschool_ai_requests", delivery.msg_id);
       console.error("AI request failed", row.id, err);
     }
   }
-  return { processed, failed };
+
+  return { processed, failed, skipped };
 }
 
 function parseQuestionPayload(rawText: string): { questions: unknown[] } {
@@ -539,44 +720,386 @@ async function processQuestionGeneration(limit: number): Promise<{ processed: nu
   return { processed, generated, failed };
 }
 
-async function processIngestionJobs(limit: number): Promise<{ processed: number; deferred: number }> {
-  const { data, error } = await supabase
-    .from("curriculum_ingestion_jobs")
-    .select("id,source_version_id,job_status,stage,attempts,max_attempts,available_at,last_error,metadata")
-    .eq("job_status", "queued")
-    .order("created_at", { ascending: true })
-    .limit(limit);
-  if (error) throw error;
 
-  let processed = 0;
+
+async function processIngestionJobs(limit: number): Promise<{ extracted: number; embedded: number; deferred: number; failed: number; skipped: number }> {
+  const deliveries = await readQueue("myschool_curriculum_ingestion", limit);
+  const workerId = crypto.randomUUID();
+  let extracted = 0;
+  let embedded = 0;
   let deferred = 0;
-  for (const job of (data ?? []) as Array<{ id: string; source_version_id: string; job_status: string; stage: string; attempts: number; max_attempts: number }>) {
-    try {
-      await supabase.from("curriculum_ingestion_jobs").update({ job_status: "processing", attempts: job.attempts + 1 }).eq("id", job.id);
-      const { data: version, error: versionErr } = await supabase
-        .from("curriculum_source_versions")
-        .select("id,source_id,version_label,ingestion_status,storage_bucket,storage_object_path,extraction_metadata")
-        .eq("id", job.source_version_id)
-        .single();
-      if (versionErr) throw versionErr;
-      if (!version?.storage_object_path) {
-        deferred += 1;
-        await supabase.from("curriculum_ingestion_jobs").update({ job_status: "retrying", last_error: "No storage object path is registered yet", available_at: new Date(Date.now() + 30 * 60 * 1000).toISOString() }).eq("id", job.id);
+  let failed = 0;
+  let skipped = 0;
+
+  for (const delivery of deliveries) {
+    const curriculumJobId = String(delivery.message?.curriculum_ingestion_job_id ?? "");
+    const genericJobId = String(delivery.message?.job_id ?? "");
+
+    if (!curriculumJobId && genericJobId) {
+      const parentJob = await claimQuestionJob(genericJobId, workerId);
+      if (!parentJob) {
+        await archiveQueueMessage("myschool_curriculum_ingestion", delivery.msg_id);
+        skipped += 1;
         continue;
       }
-      await supabase.from("curriculum_ingestion_jobs").update({ job_status: "completed", last_error: null }).eq("id", job.id);
-      processed += 1;
+
+      try {
+        if (!["ingest_book", "chunk_book"].includes(parentJob.job_type)) {
+          throw new Error(`Unsupported ingestion queue job type: ${parentJob.job_type}`);
+        }
+        if (!parentJob.source_version_id) throw new Error("Ingestion job is missing source_version_id");
+
+        const idempotencyKey = `curriculum-ingestion:${parentJob.id}`;
+        const { data: existingChild, error: existingChildError } = await supabase
+          .from("curriculum_ingestion_jobs")
+          .select("id")
+          .eq("idempotency_key", idempotencyKey)
+          .maybeSingle();
+        dbError("Check existing curriculum ingestion child", existingChildError);
+
+        if (!existingChild) {
+          const { error: insertChildError } = await supabase.from("curriculum_ingestion_jobs").insert({
+            source_version_id: parentJob.source_version_id,
+            job_status: "queued",
+            stage: "extract",
+            attempts: 0,
+            max_attempts: 5,
+            available_at: new Date().toISOString(),
+            metadata: {
+              origin_job_id: parentJob.id,
+              requested_stage: parentJob.job_type,
+              payload: parentJob.payload ?? {},
+            },
+            idempotency_key: idempotencyKey,
+          });
+          dbError("Create curriculum ingestion child", insertChildError);
+        }
+
+        const { error: parentCompleteError } = await supabase.from("question_generation_jobs").update({
+          job_status: "completed",
+          last_error: null,
+          locked_at: null,
+          locked_by: null,
+        }).eq("id", parentJob.id);
+        dbError("Complete ingestion parent job", parentCompleteError);
+
+        await archiveQueueMessage("myschool_curriculum_ingestion", delivery.msg_id);
+        extracted += 1;
+      } catch (err) {
+        failed += 1;
+        const terminal = Number(parentJob.attempts) >= Number(parentJob.max_attempts);
+        const { error: releaseError } = await supabase.from("question_generation_jobs").update({
+          job_status: terminal ? "failed" : "retrying",
+          last_error: err instanceof Error ? err.message.slice(0, 1000) : "Could not create ingestion job",
+          available_at: new Date(Date.now() + retryDelayMinutes(Number(parentJob.attempts)) * 60_000).toISOString(),
+          locked_at: null,
+          locked_by: null,
+        }).eq("id", parentJob.id);
+        dbError("Release ingestion parent job", releaseError);
+        await archiveQueueMessage("myschool_curriculum_ingestion", delivery.msg_id);
+      }
+      continue;
+    }
+
+    if (!/^[0-9a-f-]{36}$/i.test(curriculumJobId)) {
+      await archiveQueueMessage("myschool_curriculum_ingestion", delivery.msg_id);
+      skipped += 1;
+      continue;
+    }
+
+    const job = await claimIngestionJob(curriculumJobId, workerId);
+    if (!job) {
+      await archiveQueueMessage("myschool_curriculum_ingestion", delivery.msg_id);
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      const { data: version, error: versionErr } = await supabase
+        .from("curriculum_source_versions")
+        .select("id,source_id,version_label,ingestion_status,storage_bucket,storage_object_path,extraction_metadata,extracted_text_sha256,file_sha256,page_count")
+        .eq("id", job.source_version_id)
+        .single();
+      dbError("Load version for ingestion", versionErr);
+
+      if (job.stage === "extract" || job.stage === "chunk") {
+        if (!version.storage_object_path) throw new Error("SOURCE_FILE_NOT_AVAILABLE: upload a PDF, DOCX or text file to restart ingestion");
+
+        const bucket = version.storage_bucket || "school-files";
+        const objectPath = version.storage_object_path;
+        const { data: blob, error: downloadError } = await supabase.storage.from(bucket).download(objectPath);
+        dbError("Download curriculum source", downloadError);
+        if (!blob) throw new Error("Storage returned no curriculum source file");
+
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const fileSha = await sha256HexBytes(bytes);
+        if (version.file_sha256 && version.file_sha256 !== fileSha) {
+          throw new Error("SOURCE_FILE_HASH_MISMATCH: the uploaded source differs from the registered file hash");
+        }
+
+        const fileName = String(
+          (version.extraction_metadata as Record<string, unknown> | null)?.file_name ?? objectPath.split("/").pop() ?? "curriculum-source"
+        );
+        const extractedDocument = await extractCurriculumDocument(fileName, blob.type, bytes);
+        const extractedHash = await sha256HexText(extractedDocument.text);
+        if (version.extracted_text_sha256 && version.extracted_text_sha256 !== extractedHash) {
+          throw new Error("CURRICULUM_VERSION_IMMUTABLE: create a new source version when extracted content changes");
+        }
+
+        const chunks = chunkCurriculumPages(extractedDocument.pages, 4200);
+        if (chunks.length === 0) throw new Error("NO_CURRICULUM_CHUNKS: document text could not be segmented");
+
+        const rows = [];
+        for (const chunk of chunks) {
+          rows.push({
+            source_id: version.source_id,
+            source_version_id: version.id,
+            chunk_index: chunk.chunkIndex,
+            page_start: chunk.pageStart,
+            page_end: chunk.pageEnd,
+            chapter_title: chunk.chapterTitle,
+            section_title: chunk.sectionTitle,
+            content_text: chunk.contentText,
+            content_sha256: await sha256HexText(chunk.contentText),
+            token_count: chunk.tokenCount,
+            status: "pending",
+            metadata: {
+              parser_version: extractedDocument.parserVersion,
+              mime_type: extractedDocument.mimeType,
+              chunking_strategy: "heading-paragraph-page/4200-char",
+            },
+          });
+        }
+
+        const { error: upsertChunksError } = await supabase
+          .from("curriculum_chunks")
+          .upsert(rows, { onConflict: "source_version_id,chunk_index" });
+        dbError("Save extracted curriculum chunks", upsertChunksError);
+
+        const { error: removeObjectError } = await supabase.storage.from(bucket).remove([objectPath]);
+        const sourceFileDeleted = !removeObjectError;
+        const nextMetadata = {
+          ...(version.extraction_metadata ?? {}),
+          parser_version: extractedDocument.parserVersion,
+          mime_type: extractedDocument.mimeType,
+          chunk_count: rows.length,
+          source_file_sha256: fileSha,
+          extracted_text_sha256: extractedHash,
+          source_file_deleted: sourceFileDeleted,
+          source_file_delete_error: removeObjectError?.message ?? null,
+        };
+
+        const { error: updateVersionError } = await supabase.from("curriculum_source_versions").update({
+          ingestion_status: "extracted",
+          extracted_text_sha256: extractedHash,
+          file_sha256: fileSha,
+          page_count: extractedDocument.pageCount,
+          extraction_metadata: nextMetadata,
+          storage_object_path: sourceFileDeleted ? null : objectPath,
+        }).eq("id", version.id);
+        dbError("Update extracted curriculum version", updateVersionError);
+
+        const { error: advanceJobError } = await supabase.from("curriculum_ingestion_jobs").update({
+          stage: "embed",
+          job_status: "retrying",
+          available_at: new Date().toISOString(),
+          last_error: null,
+          locked_at: null,
+          locked_by: null,
+          updated_at: new Date().toISOString(),
+        }).eq("id", job.id);
+        dbError("Advance curriculum ingestion to embedding", advanceJobError);
+
+        await archiveQueueMessage("myschool_curriculum_ingestion", delivery.msg_id);
+        extracted += 1;
+      } else if (job.stage === "embed") {
+        const { data: chunks, error: chunksError } = await supabase
+          .from("curriculum_chunks")
+          .select("id,content_text")
+          .eq("source_version_id", version.id)
+          .is("embedding", null)
+          .order("chunk_index", { ascending: true })
+          .limit(64);
+        dbError("Load chunks for embedding", chunksError);
+
+        if (chunks && chunks.length > 0) {
+          const vectors = await generateEmbeddings(chunks.map((chunk) => chunk.content_text));
+          for (let index = 0; index < chunks.length; index += 1) {
+            const { error: embeddingUpdateError } = await supabase.from("curriculum_chunks").update({
+              embedding: vectorLiteral(vectors[index]),
+              embedding_model_key: "openai/text-embedding-3-small",
+              embedded_at: new Date().toISOString(),
+              status: "embedded",
+              last_error: null,
+              updated_at: new Date().toISOString(),
+            }).eq("id", chunks[index].id);
+            dbError("Save curriculum embedding", embeddingUpdateError);
+          }
+
+          const { error: retryError } = await supabase.from("curriculum_ingestion_jobs").update({
+            job_status: "retrying",
+            available_at: new Date().toISOString(),
+            locked_at: null,
+            locked_by: null,
+            last_error: null,
+            updated_at: new Date().toISOString(),
+          }).eq("id", job.id);
+          dbError("Queue remaining embeddings", retryError);
+        } else {
+          const { count: pendingCount, error: pendingError } = await supabase
+            .from("curriculum_chunks")
+            .select("id", { count: "exact", head: true })
+            .eq("source_version_id", version.id)
+            .is("embedding", null);
+          dbError("Verify curriculum embedding completion", pendingError);
+          if ((pendingCount ?? 0) > 0) throw new Error("Curriculum embedding batch is incomplete");
+
+          const { error: readyError } = await supabase.from("curriculum_source_versions").update({
+            ingestion_status: "ready",
+            updated_at: new Date().toISOString(),
+          }).eq("id", version.id);
+          dbError("Mark curriculum version ready", readyError);
+
+          const { error: completeError } = await supabase.from("curriculum_ingestion_jobs").update({
+            job_status: "completed",
+            last_error: null,
+            locked_at: null,
+            locked_by: null,
+            updated_at: new Date().toISOString(),
+          }).eq("id", job.id);
+          dbError("Complete curriculum ingestion", completeError);
+          embedded += 1;
+        }
+
+        await archiveQueueMessage("myschool_curriculum_ingestion", delivery.msg_id);
+      } else {
+        throw new Error(`Unsupported curriculum ingestion stage: ${job.stage}`);
+      }
     } catch (err) {
-      deferred += 1;
-      await supabase.from("curriculum_ingestion_jobs").update({
-        job_status: "retrying",
-        last_error: err instanceof Error ? err.message : String(err),
-        available_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      failed += 1;
+      const terminal = Number(job.attempts) >= Number(job.max_attempts);
+      const { error: releaseError } = await supabase.from("curriculum_ingestion_jobs").update({
+        job_status: terminal ? "failed" : "retrying",
+        last_error: err instanceof Error ? err.message.slice(0, 1000) : "Curriculum ingestion failed",
+        available_at: new Date(Date.now() + retryDelayMinutes(Number(job.attempts)) * 60_000).toISOString(),
+        locked_at: null,
+        locked_by: null,
+        updated_at: new Date().toISOString(),
       }).eq("id", job.id);
+      dbError("Release curriculum ingestion job", releaseError);
+      await archiveQueueMessage("myschool_curriculum_ingestion", delivery.msg_id);
+      console.error("Curriculum ingestion failed", job.id, err);
     }
   }
 
-  return { processed, deferred };
+  return { extracted, embedded, deferred, failed, skipped };
+}
+
+async function processEmbeddingJobs(limit: number): Promise<{ processed: number; embedded: number; failed: number; skipped: number }> {
+  const deliveries = await readQueue("myschool_embedding", limit);
+  const workerId = crypto.randomUUID();
+  let processed = 0;
+  let embedded = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const delivery of deliveries) {
+    const jobId = String(delivery.message?.job_id ?? "");
+    if (!/^[0-9a-f-]{36}$/i.test(jobId)) {
+      await archiveQueueMessage("myschool_embedding", delivery.msg_id);
+      skipped += 1;
+      continue;
+    }
+
+    const job = await claimQuestionJob(jobId, workerId);
+    if (!job) {
+      await archiveQueueMessage("myschool_embedding", delivery.msg_id);
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      let items: Array<{ id: string; text: string }> = [];
+      const payload = job.payload ?? {};
+      if (job.job_type === "embed_chunks") {
+        const requestedIds = Array.isArray(payload.chunk_ids) ? payload.chunk_ids.map(String) : [];
+        let query = supabase.from("curriculum_chunks").select("id,content_text").is("embedding", null).limit(64);
+        if (requestedIds.length > 0) query = query.in("id", requestedIds);
+        else if (job.source_version_id) query = query.eq("source_version_id", job.source_version_id);
+        else throw new Error("embed_chunks requires source_version_id or payload.chunk_ids");
+
+        const { data, error } = await query;
+        dbError("Load chunks for embedding job", error);
+        items = (data ?? []).map((row) => ({ id: row.id, text: row.content_text }));
+      } else if (job.job_type === "embed_questions") {
+        const requestedIds = Array.isArray(payload.question_ids) ? payload.question_ids.map(String) : [];
+        let ids = requestedIds;
+        if (ids.length === 0 && job.source_version_id) {
+          const { data: chunkRows, error: chunkRowsError } = await supabase
+            .from("curriculum_chunks").select("id").eq("source_version_id", job.source_version_id);
+          dbError("Load source chunks for question embeddings", chunkRowsError);
+          const chunkIds = (chunkRows ?? []).map((row) => row.id);
+          if (chunkIds.length > 0) {
+            const { data: links, error: linksError } = await supabase
+              .from("question_sources").select("question_id").in("chunk_id", chunkIds);
+            dbError("Load questions linked to source chunks", linksError);
+            ids = [...new Set((links ?? []).map((row) => row.question_id))];
+          }
+        }
+        if (ids.length === 0) throw new Error("embed_questions requires question_ids or source_version_id");
+        const { data, error } = await supabase
+          .from("question_bank").select("id,question_text,choices").in("id", ids).is("embedding", null).limit(64);
+        dbError("Load questions for embeddings", error);
+        items = (data ?? []).map((row) => ({
+          id: row.id,
+          text: [row.question_text, JSON.stringify(row.choices ?? [])].join("\n"),
+        }));
+      } else {
+        throw new Error(`Unsupported embedding job type: ${job.job_type}`);
+      }
+
+      if (items.length > 0) {
+        const vectors = await generateEmbeddings(items.map((item) => item.text));
+        const table = job.job_type === "embed_chunks" ? "curriculum_chunks" : "question_bank";
+        for (let index = 0; index < items.length; index += 1) {
+          const { error: updateError } = await supabase.from(table).update({
+            embedding: vectorLiteral(vectors[index]),
+            embedding_model_key: "openai/text-embedding-3-small",
+            updated_at: new Date().toISOString(),
+            ...(table === "curriculum_chunks" ? { embedded_at: new Date().toISOString(), status: "embedded" } : {}),
+          }).eq("id", items[index].id);
+          dbError("Save reusable content embedding", updateError);
+        }
+        embedded += items.length;
+      }
+
+      const { error: completeError } = await supabase.from("question_generation_jobs").update({
+        job_status: "completed",
+        last_error: null,
+        locked_at: null,
+        locked_by: null,
+      }).eq("id", job.id);
+      dbError("Complete embedding job", completeError);
+
+      await archiveQueueMessage("myschool_embedding", delivery.msg_id);
+      processed += 1;
+    } catch (err) {
+      failed += 1;
+      const terminal = Number(job.attempts) >= Number(job.max_attempts);
+      const { error: releaseError } = await supabase.from("question_generation_jobs").update({
+        job_status: terminal ? "failed" : "retrying",
+        last_error: err instanceof Error ? err.message.slice(0, 1000) : "Embedding failed",
+        available_at: new Date(Date.now() + retryDelayMinutes(Number(job.attempts)) * 60_000).toISOString(),
+        locked_at: null,
+        locked_by: null,
+      }).eq("id", job.id);
+      dbError("Release embedding job", releaseError);
+      await archiveQueueMessage("myschool_embedding", delivery.msg_id);
+      console.error("Embedding job failed", job.id, err);
+    }
+  }
+
+  return { processed, embedded, failed, skipped };
 }
 
 Deno.serve(async (req: Request) => {
@@ -622,7 +1145,7 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  const allowedModes: Mode[] = ["all", "ai_requests", "question_generation", "ingestion"];
+  const allowedModes: Mode[] = ["all", "ai_requests", "question_generation", "ingestion", "embeddings"];
   const requestedMode = body.mode ?? url.searchParams.get("mode") ?? "all";
   if (!allowedModes.includes(requestedMode as Mode)) {
     return json({ error: "Invalid worker mode" }, 400);
@@ -640,6 +1163,7 @@ Deno.serve(async (req: Request) => {
     if (finalMode === "all" || finalMode === "ai_requests") result.ai_requests = await processAiRequests(limit);
     if (finalMode === "all" || finalMode === "question_generation") result.question_generation = await processQuestionGeneration(limit);
     if (finalMode === "all" || finalMode === "ingestion") result.ingestion = await processIngestionJobs(limit);
+    if (finalMode === "all" || finalMode === "embeddings") result.embeddings = await processEmbeddingJobs(limit);
     return json(result);
   } catch (err) {
     console.error("Worker execution failed", err);
