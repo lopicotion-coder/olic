@@ -809,20 +809,33 @@ begin
         or feature.value ->> 'included' = 'true'
       )
   ),
-  overrides as (
+  override_ranked as (
     select
-      eo.feature_key,
-      case when eo.is_enabled then 'override' else 'revoked_override' end as source_type,
-      eo.id as source_id,
-      eo.ends_at::date as ends_on,
-      case when eo.is_enabled then 0 else -1 end as priority
+      eo.*,
+      row_number() over (
+        partition by eo.feature_key
+        order by eo.created_at desc, eo.id desc
+      ) as row_number
     from public.learner_entitlement_overrides eo
     where eo.learner_profile_id = p_learner_profile_id
       and eo.starts_at <= now()
       and (eo.ends_at is null or eo.ends_at > now())
   ),
+  effective_overrides as (
+    select * from override_ranked where row_number = 1
+  ),
+  enabled_overrides as (
+    select
+      feature_key,
+      'override'::text as source_type,
+      id as source_id,
+      ends_at::date as ends_on,
+      0 as priority
+    from effective_overrides
+    where is_enabled
+  ),
   combined as (
-    select * from overrides
+    select * from enabled_overrides
     union all
     select * from school_features
     union all
@@ -834,6 +847,12 @@ begin
     combined.source_id,
     combined.ends_on
   from combined
+  where not exists (
+    select 1
+    from effective_overrides denied
+    where denied.feature_key = combined.feature_key
+      and not denied.is_enabled
+  )
   order by combined.feature_key, combined.priority;
 end;
 $$;
@@ -924,6 +943,20 @@ begin
       and learner_profile_id <> p_learner_profile_id
   ) then
     raise exception 'Idempotency key is already used by another learner';
+  end if;
+
+  if exists (
+    select 1 from public.learner_gems_ledger
+    where idempotency_key = p_idempotency_key
+      and learner_profile_id = p_learner_profile_id
+      and (
+        amount <> -p_amount
+        or transaction_type <> 'redemption'
+        or reference_type is distinct from p_reference_type
+        or reference_id is distinct from p_reference_id
+      )
+  ) then
+    raise exception 'Idempotency key was reused with a different redemption payload';
   end if;
 
   if exists (
@@ -1055,6 +1088,24 @@ grant execute on function app.can_access_learner_profile(uuid) to authenticated,
 grant execute on function app.can_access_learner_billing(uuid) to authenticated, myschool_runtime;
 grant execute on function app.can_view_learner_progress(uuid) to authenticated, myschool_runtime;
 
+create or replace function app.can_access_friends_competition(p_competition_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, public, app
+as $$
+  select exists (
+    select 1
+    from public.learning_competition_entries entry
+    where entry.competition_id = p_competition_id
+      and app.can_access_learner_profile(entry.learner_profile_id)
+  );
+$$;
+
+revoke all on function app.can_access_friends_competition(uuid) from public, anon;
+grant execute on function app.can_access_friends_competition(uuid) to authenticated, myschool_runtime;
+
 -- RLS and grants: users can read only their own profile, linked children, and explicitly visible activity.
 alter table public.learner_profiles enable row level security;
 alter table public.learner_guardians enable row level security;
@@ -1158,12 +1209,7 @@ using (
     competition_scope = 'platform'
     or (
       competition_scope = 'friends'
-      and exists (
-        select 1
-        from public.learning_competition_entries entry
-        where entry.competition_id = learning_competitions.id
-          and app.can_access_learner_profile(entry.learner_profile_id)
-      )
+      and app.can_access_friends_competition(id)
     )
     or (competition_scope = 'tenant' and tenant_id = app.current_tenant_id())
     or (competition_scope in ('school', 'class') and tenant_id = app.current_tenant_id() and school_id = app.current_school_id())
