@@ -165,3 +165,13 @@ Every phase must include:
 - Do not invent migration history. Restore original SQL or create new immutable migrations from verified current state.
 - The production repository is Public at the time of this snapshot. Never commit secrets, production rows, identity values, document contents or private backup material.
 - Do not deploy the archived Lovable prototype as production.
+
+ 
+## Implementation progress — 2026-11-18
+- Created working branch `feature/platform-expansion-plan` from `develop`.
+- Added 12 GitHub Issues covering P0/P1/P2 work.
+- Versioned the exact currently deployed `ai-gateway` and `ai-worker` source snapshots under `supabase/functions/`.
+- Prepared an internal-token guard for privileged `ai-worker` execution, removed queue/key-presence details from its health response, and added focused Deno tests.
+- Added a GitHub Actions workflow to run the worker-auth tests on pull requests.
+- The worker hardening is branch-only and is **not deployed**. Deno is not installed in the current authoring environment, so local Deno test execution has not been completed; CI must verify it.
+- No production database, Auth settings, Storage objects, deployed Edge Functions or billing configuration were modified in this implementation pass.
