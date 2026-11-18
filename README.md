@@ -9,12 +9,14 @@ The connected Supabase project was identified by its school/tenant/student/guard
 - Project ref: `yigixquioguqnpbfhepi`
 - Region: `eu-west-1`
 - PostgreSQL: `17.11.0.018`
-- Applied migration ledger entries: 30
-- Public/app table inventory: 100
+- Applied migration ledger entries: 40
+- Public/app table inventory: 115
 - Storage buckets: 1 (`school-files`, private)
 - Edge Functions observed: 0
 
 A security hardening follow-up was applied to the live Supabase project on 2026-11-18. See `docs/SECURITY-REVIEW-2026-11-18.md` for the scope and the remaining follow-up items.
+
+Phase 9 AI curriculum foundations were applied on 2026-11-18: book/edition rights, curriculum chunks, evidence-linked RAG retrieval, reusable questions, protected answer keys, student exposure history, quality checks, and scheduled generation queues. The scheduler is active; worker Edge Functions and provider API credentials are not deployed yet.
 
 The repository currently contains a sanitized project inventory, generated public database types, the applied migration history ledger, and encrypted backup automation.
 
