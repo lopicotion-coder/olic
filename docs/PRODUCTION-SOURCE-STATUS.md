@@ -82,3 +82,12 @@ The following are implemented on `feature/platform-expansion-plan` and are not y
 - GitHub Actions run #41 passed Worker/Gateway type-checks and tests.
 
 Do not interpret these branch changes as deployed production capability. The new budget migration has not been applied, Edge Function source remains the deployed v1 snapshot, and production still has no configured provider routes, AI budgets, Edge Function secrets or Worker schedule. No production writes/deployments were performed during this implementation pass.
+
+ 
+## Final AI runtime hardening — 2026-11-19
+- Added terminal failed-settlement RPCs for tenant and independent-learner chat when provider success is followed by response persistence failure. Actual usage and cost are recorded as failed events, and the request is not automatically called again.
+- Added a failure-outcome settlement RPC for background providers. If normal finalization fails after a successful API call, Worker attempts to record actual usage and overrun metadata before releasing the reservation.
+- If both settlement paths fail because the database is unavailable, the reservation remains until expiry and a critical log requires manual reconciliation against provider billing.
+- Output-token fallback now estimates approximately one token per 1.5 characters when provider usage metadata is missing, matching the conservative Arabic prompt estimator.
+- CI run #49 succeeded: Deno type-check plus Worker auth, document parser, budget-math and Gateway auth tests.
+- PostgreSQL migrations have not been executed against an isolated staging branch. The branch-creation tool requires cost approval; do not apply these migrations to production as a substitute.
