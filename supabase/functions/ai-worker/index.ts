@@ -129,6 +129,27 @@ type ProviderResponse = {
 
 type GatewayMessage = { role: "system" | "user" | "assistant"; content: string };
 
+type CurriculumRetrievalRow = {
+  chunk_id: string;
+  source_id: string;
+  source_version_id: string;
+  source_title: string;
+  version_label: string;
+  subject_code: string;
+  grade_code: string;
+  sharing_scope: string;
+  chapter_title: string | null;
+  section_title: string | null;
+  page_start: number | null;
+  page_end: number | null;
+  content_text: string;
+  similarity_score: number;
+  lexical_rank: number | null;
+  semantic_rank: number | null;
+  retrieval_score: number;
+  citation_label: string;
+};
+
 type QueueName =
   | "myschool_ai_requests"
   | "myschool_question_generation"
@@ -425,6 +446,61 @@ async function selectRoute(tenantId: string | null, schoolId: string | null, fea
   return rows.find((row) => row.tenant_id === tenantId && row.school_id === schoolId) ?? rows.find((row) => row.tenant_id === tenantId && row.school_id === null) ?? null;
 }
 
+async function retrieveTutorEvidence(row: AiRequestRow): Promise<CurriculumRetrievalRow[]> {
+  if (!OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is required for curriculum-grounded tutor retrieval");
+  }
+
+  const context = row.input_context ?? {};
+  const subjectCode = typeof context.subject_code === "string" ? context.subject_code : null;
+  const gradeCode = typeof context.grade_code === "string" ? context.grade_code : null;
+  const sourceVersionId = typeof context.source_version_id === "string" ? context.source_version_id : null;
+
+  const [queryEmbedding] = await generateEmbeddings([row.prompt_text]);
+  const { data, error } = await supabase.rpc("search_curriculum_hybrid", {
+    p_query_text: row.prompt_text,
+    p_query_embedding: vectorLiteral(queryEmbedding),
+    p_tenant_id: row.tenant_id,
+    p_school_id: row.school_id,
+    p_subject_code: subjectCode,
+    p_grade_code: gradeCode,
+    p_source_version_id: sourceVersionId,
+    p_limit: 8,
+  });
+  dbError("Retrieve approved curriculum evidence", error);
+  return (data ?? []) as CurriculumRetrievalRow[];
+}
+
+function tutorSystemPrompt(evidence: CurriculumRetrievalRow[]): string {
+  if (evidence.length === 0) {
+    return [
+      "You are My School's curriculum-grounded tutor.",
+      "No approved matching curriculum evidence was found for this student's selected school, subject, grade and edition.",
+      "Do not invent textbook explanations, page numbers, curriculum standards, or claim that something is in the book.",
+      "Politely say that you could not find a matching approved passage, ask the student to verify the subject/grade/edition or provide the correct lesson, and offer only general study guidance clearly labeled as general rather than curriculum content.",
+      "Respond in the student's language, using age-appropriate and supportive wording.",
+    ].join("\n");
+  }
+
+  const evidenceText = evidence.map((item, index) => [
+    `[E${index + 1}] ${item.citation_label}`,
+    `Subject: ${item.subject_code}; Grade: ${item.grade_code}; Chapter: ${item.chapter_title ?? "N/A"}; Section: ${item.section_title ?? "N/A"}`,
+    item.content_text,
+  ].join("\n")).join("\n\n---\n\n");
+
+  return [
+    "You are My School's curriculum-grounded tutor.",
+    "Answer the student's question using only the approved curriculum evidence supplied below.",
+    "Explain the idea step by step in the student's language and at the selected grade level.",
+    "Cite factual explanations with the exact bracketed evidence label, for example [E1]. Include the book/edition/page from that label in the answer.",
+    "Never fabricate a citation, page number, textbook fact, curriculum standard or formula that is not supported by the evidence.",
+    "If the evidence is incomplete or conflicting, say so clearly and ask one focused follow-up question.",
+    "Do not reveal answer keys for active assessments or help bypass assessment integrity rules.",
+    "Approved curriculum evidence:",
+    evidenceText,
+  ].join("\n\n");
+}
+
 async function processAiRequests(limit: number): Promise<{ processed: number; failed: number; skipped: number }> {
   const deliveries = await readQueue("myschool_ai_requests", limit);
   const workerId = crypto.randomUUID();
@@ -456,8 +532,14 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
         provider === "gemini" ? DEFAULT_MODEL_GEMINI : DEFAULT_MODEL_XAI
       );
       const maxOutputTokens = route?.max_output_tokens ?? 2048;
+      const evidence = row.feature_key === "tutor" ? await retrieveTutorEvidence(row) : [];
       const messages: GatewayMessage[] = [
-        { role: "system", content: "You are My School's internal assistant. Follow school policy and answer using the least amount of tokens required." },
+        {
+          role: "system",
+          content: row.feature_key === "tutor"
+            ? tutorSystemPrompt(evidence)
+            : "You are My School's internal assistant. Follow school policy and answer using the least amount of tokens required.",
+        },
         { role: "user", content: row.prompt_text },
       ];
 
@@ -468,14 +550,34 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
         ? (inputTokens * Number(route.input_price_per_million) + outputTokens * Number(route.output_price_per_million)) / 1_000_000
         : 0;
 
-      const { error: responseError } = await supabase.from("ai_responses").upsert({
+      const { data: savedResponse, error: responseError } = await supabase.from("ai_responses").upsert({
         request_id: row.id,
         tenant_id: row.tenant_id,
         school_id: row.school_id,
         response_text: result.content,
         response_json: result.raw as Record<string, unknown>,
-      }, { onConflict: "request_id" });
+      }, { onConflict: "request_id" }).select("id").single();
       dbError("Save AI response", responseError);
+
+      if (evidence.length > 0 && savedResponse?.id) {
+        const evidenceRows = evidence.map((item, index) => ({
+          request_id: row.id,
+          response_id: savedResponse.id,
+          chunk_id: item.chunk_id,
+          tenant_id: row.tenant_id,
+          school_id: row.school_id,
+          retrieval_rank: index + 1,
+          similarity_score: item.similarity_score,
+          source_excerpt: item.content_text.slice(0, 2000),
+          citation_label: item.citation_label,
+          selected_for_answer: true,
+        }));
+        const { error: evidenceError } = await supabase.from("ai_rag_evidence").upsert(
+          evidenceRows,
+          { onConflict: "request_id,chunk_id" },
+        );
+        dbError("Save RAG evidence citations", evidenceError);
+      }
 
       const { data: existingUsage, error: usageLookupError } = await supabase
         .from("ai_usage")
