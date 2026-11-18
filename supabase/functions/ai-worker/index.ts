@@ -555,16 +555,34 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
     }
 
     let finalized = false;
+    let reservationCreated = false;
     try {
-      const route = row.tenant_id
-        ? await selectRoute(row.tenant_id, row.school_id, row.feature_key)
-        : null;
-      const provider = normalizeProvider(route?.provider_key ?? DEFAULT_PROVIDER) ?? DEFAULT_PROVIDER;
-      const model = route?.model_key ?? (
-        provider === "openrouter" ? DEFAULT_MODEL_OPENROUTER :
-        provider === "openai" ? DEFAULT_MODEL_OPENAI :
-        provider === "gemini" ? DEFAULT_MODEL_GEMINI : DEFAULT_MODEL_XAI
-      );
+      const { data: runtimeData, error: runtimeError } = await supabase.rpc("worker_get_platform_ai_runtime");
+      dbError("Load platform learner AI runtime settings", runtimeError);
+      const runtime = firstRow<{
+        provider_key: string;
+        model_key: string;
+        input_price_per_million: number;
+        output_price_per_million: number;
+        monthly_budget_amount: number;
+        monthly_request_limit: number;
+        max_input_tokens: number;
+        max_output_tokens: number;
+        currency: string;
+      }>(runtimeData);
+      if (!runtime) throw new Error("PLATFORM_AI_RUNTIME_NOT_CONFIGURED");
+
+      const provider = normalizeProvider(runtime.provider_key);
+      if (!provider) throw new Error("PLATFORM_AI_PROVIDER_NOT_SUPPORTED");
+      if (runtime.currency !== "USD" || Number(runtime.input_price_per_million) <= 0 ||
+          Number(runtime.output_price_per_million) <= 0) {
+        throw new Error("PLATFORM_AI_PRICING_CONFIGURATION_INVALID");
+      }
+      const model = runtime.model_key;
+      const maxOutputTokens = Math.min(Number(row.max_output_tokens), Number(runtime.max_output_tokens));
+      if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1) {
+        throw new Error("PLATFORM_AI_OUTPUT_TOKEN_LIMIT_INVALID");
+      }
 
       const [queryEmbedding] = await generateEmbeddings([row.prompt_text]);
       const { data: evidenceData, error: evidenceError } = await supabase.rpc("search_curriculum_hybrid", {
@@ -584,17 +602,38 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
         { role: "system", content: tutorSystemPrompt(evidence) },
         { role: "user", content: row.prompt_text },
       ];
+      const estimatedInputTokens = Math.max(
+        1,
+        Math.ceil(messages.reduce((total, message) => total + message.content.length, 0) / 1.5) + 128,
+      );
+      const estimatedCost = (
+        estimatedInputTokens * Number(runtime.input_price_per_million) +
+        maxOutputTokens * Number(runtime.output_price_per_million)
+      ) / 1_000_000;
+
+      const { data: reservationData, error: reservationError } = await supabase.rpc(
+        "worker_reserve_learner_ai_budget",
+        {
+          p_request_id: row.id,
+          p_estimated_amount: estimatedCost,
+          p_estimated_input_tokens: estimatedInputTokens,
+          p_requested_output_tokens: maxOutputTokens,
+        },
+      );
+      dbError("Reserve platform learner AI budget", reservationError);
+      const reservation = firstRow<{ reservation_id: string }>(reservationData);
+      if (!reservation?.reservation_id) throw new Error("PLATFORM_AI_BUDGET_RESERVATION_FAILED");
+      reservationCreated = true;
+
       const startedAt = Date.now();
-      const result = await callProvider(provider, model, messages, row.max_output_tokens);
+      const result = await callProvider(provider, model, messages, maxOutputTokens);
       const latencyMs = Date.now() - startedAt;
-      const inputTokens = result.promptTokens ?? 0;
+      const inputTokens = result.promptTokens ?? estimatedInputTokens;
       const outputTokens = result.completionTokens ?? 0;
-      const cost = route
-        ? (
-            inputTokens * Number(route.input_price_per_million) +
-            outputTokens * Number(route.output_price_per_million)
-          ) / 1_000_000
-        : 0;
+      const cost = (
+        inputTokens * Number(runtime.input_price_per_million) +
+        outputTokens * Number(runtime.output_price_per_million)
+      ) / 1_000_000;
 
       const { data: savedResponse, error: responseError } = await supabase
         .from("learner_ai_responses")
@@ -645,15 +684,16 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
       }, { onConflict: "request_id" });
       dbError("Save independent learner AI usage", usageError);
 
-      const { error: completeError } = await supabase.from("learner_ai_requests").update({
-        status: "completed",
-        completed_at: new Date().toISOString(),
-        locked_at: null,
-        locked_by: null,
-        last_error: null,
-        updated_at: new Date().toISOString(),
-      }).eq("id", row.id);
-      dbError("Complete independent learner AI request", completeError);
+      const { error: finalizeError } = await supabase.rpc("worker_finalize_learner_ai_request", {
+        p_request_id: row.id,
+        p_provider_key: provider,
+        p_model_key: model,
+        p_input_tokens: inputTokens,
+        p_output_tokens: outputTokens,
+        p_billed_amount: cost,
+        p_metadata: { latency_ms: latencyMs, source_count: evidence.length },
+      });
+      dbError("Finalize learner AI request and settle platform budget", finalizeError);
       finalized = true;
 
       await archiveQueueMessage("myschool_learner_ai_requests", delivery.msg_id);
@@ -663,6 +703,14 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
         console.error("Learner tutor request completed but queue archive failed", row.id, err);
         processed += 1;
         continue;
+      }
+
+      if (reservationCreated) {
+        const { error: reservationReleaseError } = await supabase.rpc(
+          "worker_release_learner_ai_budget_reservation",
+          { p_request_id: row.id },
+        );
+        if (reservationReleaseError) console.error("Could not release learner AI budget reservation", row.id, reservationReleaseError);
       }
 
       failed += 1;
@@ -708,15 +756,19 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
     }
 
     let finalized = false;
+    let reservationCreated = false;
     try {
       const route = await selectRoute(row.tenant_id, row.school_id, row.feature_key);
-      const provider = normalizeProvider(route?.provider_key ?? row.provider_key ?? DEFAULT_PROVIDER) ?? DEFAULT_PROVIDER;
-      const model = route?.model_key ?? row.model_key ?? (
-        provider === "openrouter" ? DEFAULT_MODEL_OPENROUTER :
-        provider === "openai" ? DEFAULT_MODEL_OPENAI :
-        provider === "gemini" ? DEFAULT_MODEL_GEMINI : DEFAULT_MODEL_XAI
-      );
-      const maxOutputTokens = route?.max_output_tokens ?? 2048;
+      if (!route) throw new Error("AI_PROVIDER_ROUTE_NOT_CONFIGURED");
+      const provider = normalizeProvider(route.provider_key);
+      if (!provider) throw new Error("AI_PROVIDER_ROUTE_IS_NOT_SUPPORTED");
+      const model = route.model_key;
+      const maxOutputTokens = Number(route.max_output_tokens);
+      if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 ||
+          Number(route.input_price_per_million) <= 0 || Number(route.output_price_per_million) <= 0) {
+        throw new Error("AI_PROVIDER_ROUTE_PRICING_OR_TOKEN_LIMIT_INVALID");
+      }
+
       const evidence = row.feature_key === "tutor" ? await retrieveTutorEvidence(row) : [];
       const messages: GatewayMessage[] = [
         {
@@ -728,12 +780,39 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
         { role: "user", content: row.prompt_text },
       ];
 
+      const estimatedInputTokens = Math.max(
+        1,
+        Math.ceil(messages.reduce((total, message) => total + message.content.length, 0) / 1.5) + 128,
+      );
+      const estimatedCost = (
+        estimatedInputTokens * Number(route.input_price_per_million) +
+        maxOutputTokens * Number(route.output_price_per_million)
+      ) / 1_000_000;
+
+      const { data: reservationData, error: reservationError } = await supabase.rpc("worker_reserve_ai_budget", {
+        p_request_id: row.id,
+        p_tenant_id: row.tenant_id,
+        p_school_id: row.school_id,
+        p_user_id: row.requester_user_id,
+        p_feature_key: row.feature_key,
+        p_estimated_amount: estimatedCost,
+        p_estimated_input_tokens: estimatedInputTokens,
+        p_requested_output_tokens: maxOutputTokens,
+      });
+      dbError("Reserve tenant AI budget", reservationError);
+      const reservation = firstRow<{ reservation_id: string; budget_id: string }>(reservationData);
+      if (!reservation?.reservation_id || !reservation.budget_id) {
+        throw new Error("TENANT_AI_BUDGET_RESERVATION_FAILED");
+      }
+      reservationCreated = true;
+
       const result = await callProvider(provider, model, messages, maxOutputTokens);
-      const inputTokens = result.promptTokens ?? 0;
+      const inputTokens = result.promptTokens ?? estimatedInputTokens;
       const outputTokens = result.completionTokens ?? 0;
-      const cost = route
-        ? (inputTokens * Number(route.input_price_per_million) + outputTokens * Number(route.output_price_per_million)) / 1_000_000
-        : 0;
+      const cost = (
+        inputTokens * Number(route.input_price_per_million) +
+        outputTokens * Number(route.output_price_per_million)
+      ) / 1_000_000;
 
       const { data: savedResponse, error: responseError } = await supabase.from("ai_responses").upsert({
         request_id: row.id,
@@ -790,31 +869,36 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
         dbError("Insert AI usage", insertUsageError);
       }
 
-      const { error: completeError } = await supabase.from("ai_requests").update({
-        status: "completed",
-        model_key: model,
-        provider_key: provider,
-        tokens_in: inputTokens,
-        tokens_out: outputTokens,
-        cost_amount: cost,
-        completed_at: new Date().toISOString(),
-        locked_at: null,
-        locked_by: null,
-        last_error: null,
-      }).eq("id", row.id);
-      dbError("Complete AI request", completeError);
+      const { error: finalizeError } = await supabase.rpc("worker_finalize_ai_request", {
+        p_request_id: row.id,
+        p_budget_id: reservation.budget_id,
+        p_provider_key: provider,
+        p_model_key: model,
+        p_input_tokens: inputTokens,
+        p_output_tokens: outputTokens,
+        p_billed_amount: cost,
+        p_metadata: { route_id: route.id },
+      });
+      dbError("Finalize AI request and settle tenant budget", finalizeError);
       finalized = true;
 
       await archiveQueueMessage("myschool_ai_requests", delivery.msg_id);
       processed += 1;
     } catch (err) {
       if (finalized) {
-        // The request/response/usage transaction is already committed. A redelivered
-        // message will fail the atomic claim and only archive; never call the provider twice.
         console.error("AI request completed but queue archive failed", row.id, err);
         processed += 1;
         continue;
       }
+
+      if (reservationCreated) {
+        const { error: reservationReleaseError } = await supabase.rpc(
+          "worker_release_ai_budget_reservation",
+          { p_request_id: row.id },
+        );
+        if (reservationReleaseError) console.error("Could not release tenant AI budget reservation", row.id, reservationReleaseError);
+      }
+
       failed += 1;
       const terminal = Number(row.attempts) >= Number(row.max_attempts ?? 3);
       const delayMinutes = retryDelayMinutes(Number(row.attempts) || 1);
