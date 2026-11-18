@@ -35,3 +35,10 @@ Content-Type: application/json
 The feature branch includes atomic job-claim/lease handling, pgmq queue consumption, retries, and the protected `POST /run` endpoint. The current CI validates Deno types and unit tests, but a staging concurrency/duplicate-delivery test is still required.
 
 The ready-to-review operator script is `docs/AI-WORKER-SCHEDULER.sql`. It reads `project_url`, `publishable_key`, and `worker_internal_token` from Vault, then creates a one-minute Cron job that calls `/functions/v1/ai-worker/run` with both gateway and Worker authorization. It must only be executed after branch code is deployed, Edge Function secrets are configured, and staging validation is complete. No production schedule has been created.
+
+
+## Provider response persistence failure
+
+For standard tenant AI, independent learner tutoring, and background provider calls, the Worker tracks the provider usage as soon as the provider returns. If saving the response or the normal completion settlement then fails, the Worker calls a failure-outcome settlement RPC that stores the actual tokens/cost and marks the request/operation as failed. It does not automatically retry that paid request, avoiding another provider charge.
+
+The fallback event records `budget_overrun` and `token_limit_exceeded` when the already-incurred amount/usage exceeds the reservation or a cap changed while the provider call was in flight. Future reservations include that spend. If both settlement paths fail, the Worker keeps the reservation until expiry, logs a critical error, and requires reconciliation with provider billing.
