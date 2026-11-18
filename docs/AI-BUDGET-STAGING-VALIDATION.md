@@ -54,8 +54,9 @@ Expected: RLS enabled; `anon_can_reserve=false`; `authenticated_can_reserve=fals
 - [ ] Platform/global background embeddings fail closed while `platform_ai_runtime_settings.is_enabled=false`.
 - [ ] After enabling a test platform budget, learner chat and learner RAG embeddings share the same platform cap; no school budget is charged.
 - [ ] Embedding batches above the input-token cap split before provider invocation; each sub-call creates exactly one reservation and one event.
-- [ ] Simulate response-persistence failure after a successful provider call: the request is terminally failed, an `outcome='failed'` event records actual usage/cost, and the provider is not invoked again for that request.
-- [ ] Simulate normal settlement failure after background provider success: `worker_fail_background_ai_operation` writes the failed usage event and removes the reservation.
+- [ ] Simulate response-persistence failure after a successful provider call for both tenant AI and learner AI: the request is terminally failed, an `outcome='failed'` event records actual usage/cost, and the provider is not invoked again for that request.
+- [ ] Simulate a lost RPC response after `worker_finalize_ai_request` / `worker_finalize_learner_ai_request` commits: the follow-up failure RPC returns `false`, the Worker preserves the completed request and archives the duplicate queue message without overwriting status.
+- [ ] Simulate normal settlement failure after background provider success: `worker_fail_background_ai_operation` writes one `outcome='completed'` event with `settlement_fallback=true`, removes the reservation, and returns the same provider output to the job for persistence.
 - [ ] Simulate both settlement RPCs unavailable: reservation remains until TTL, no automatic second provider call occurs, and the critical log contains the operation/request ID.
 - [ ] Run concurrent reservations near the monthly budget/request cap; row locks must prevent aggregate reservations from exceeding available budget.
 - [ ] Duplicate queue deliveries and simultaneous Worker invocations claim a job once; retryable pre-provider failures do not leave reservations behind.
