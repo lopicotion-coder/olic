@@ -469,7 +469,7 @@ async function generateEmbeddingsWithBackgroundBudget(
   const estimatedAmount = estimateUsdCost(estimatedInputTokens, 0, prices);
   const operationKey = crypto.randomUUID();
 
-  const { error: reserveError } = await supabase.rpc("worker_reserve_background_ai_operation", {
+  const { data, error: reserveError } = await supabase.rpc("worker_reserve_background_ai_operation", {
     p_operation_key: operationKey,
     p_tenant_id: scope.tenantId,
     p_school_id: scope.schoolId,
@@ -1302,7 +1302,7 @@ async function processQuestionGeneration(limit: number): Promise<{ processed: nu
         }, {
           tenantId: batch.tenant_id,
           schoolId: batch.school_id,
-          userId: source.created_by ?? null,
+          userId: null,
           featureKey: "exam_generator",
           operationKind: "question_generation",
         });
