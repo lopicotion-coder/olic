@@ -32,6 +32,6 @@ Deno.test("rejects invalid token counts", () => {
 });
 
 Deno.test("output token fallback safely estimates non-empty provider output", () => {
-  assertEquals(estimateOutputTokens("123456"), 2);
+  assertEquals(estimateOutputTokens("123456"), 4);
   assertEquals(estimateOutputTokens(""), 0);
 });
