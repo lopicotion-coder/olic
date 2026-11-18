@@ -1,0 +1,78 @@
+# AI runtime budgets and operations
+
+## What the runtime enforces
+
+### Tenant and school requests
+The Worker must load an enabled provider route with explicit positive USD input/output prices. It estimates prompt cost, reserves funds from the most-specific active school budget (or the tenant fallback), and rejects the job when there is no route, no active budget, a non-USD budget, or insufficient remaining funds.
+
+On success, the Worker saves the response and usage, then calls one database function that atomically writes the billable event, closes the request, and releases the reservation. On a retryable failure, it releases the reservation before re-queuing.
+
+Required configuration rows:
+- `ai_provider_routes`: one or more enabled routes for the tenant/feature; `input_price_per_million` and `output_price_per_million` must be current positive USD prices for the selected model.
+- `ai_budgets`: an active USD budget for the tenant, optionally at school level; configure monthly amount, monthly request limit, input-token limit and output-token limit.
+
+No route or budget is silently inferred. Missing configuration blocks execution.
+
+### Independent learner requests
+Learner-first tutoring is not charged to a school budget. It uses the separate singleton `platform_ai_runtime_settings`, plus platform reservation and spend ledgers. The singleton is inserted disabled by default. It must be configured with:
+- provider key and exact model ID;
+- current USD input/output prices per million tokens;
+- platform monthly spend cap;
+- platform monthly request cap;
+- maximum input/output tokens.
+
+The runtime remains disabled until all required values are non-null and positive. The Worker then reserves estimated chat plus RAG query-embedding cost and settles the measured provider usage on completion.
+
+### RAG embedding price
+Set the Edge Function secret `AI_EMBEDDING_PRICE_PER_MILLION` to the current USD input price for the configured embedding model. It is required for RAG tutor requests; the Worker refuses RAG calls when the price is absent or zero. The value is included in tenant/platform request cost settlement.
+
+## Configuration examples
+
+These are operator templates, not commands that should be run with placeholder values.
+
+Configure the platform runtime only after choosing the provider/model and verifying its current price sheet:
+
+```sql
+update public.platform_ai_runtime_settings
+set is_enabled = true,
+    provider_key = '<openai|openrouter|gemini|xai>',
+    model_key = '<exact-model-id>',
+    input_price_per_million = <current-usd-input-price>,
+    output_price_per_million = <current-usd-output-price>,
+    monthly_budget_amount = <platform-monthly-usd-cap>,
+    currency = 'USD',
+    monthly_request_limit = <monthly-request-cap>,
+    max_input_tokens = <max-input-tokens>,
+    max_output_tokens = <max-output-tokens>,
+    updated_at = now()
+where singleton = true;
+```
+
+Before enabling, provision the corresponding provider key as a Supabase Edge Function secret. Do not place credentials in this file, migrations, GitHub Actions logs, or browser variables.
+
+For tenant requests, insert the approved `ai_provider_routes` and `ai_budgets` rows through the platform's trusted admin workflow. Do not let a school administrator grant itself unlimited platform spend.
+
+## Worker scheduling and deployment gate
+
+The deployed project currently has a question-generation schedule, but no recurring Worker invocation. It also has no Vault secrets registered for a Vault-backed scheduled caller. Do not schedule the Worker through a public unauthenticated endpoint.
+
+Before enabling background execution:
+1. Set `AI_WORKER_INTERNAL_TOKEN` as a Supabase Edge Function secret and provision the same value to the trusted server-side caller.
+2. Keep `verify_jwt=true` on `ai-worker`; the Worker checks both Supabase JWT and the internal token.
+3. Configure `OPENAI_API_KEY` for embeddings and whichever provider secret matches the platform/tenant routes.
+4. Set `AI_EMBEDDING_PRICE_PER_MILLION`.
+5. Configure a server-side scheduler (Supabase Cron + Vault/pg_net or an external protected scheduler) that calls the Worker with the internal token.
+6. Verify in staging that JWT-only calls, missing-token calls, unpriced routes, missing budgets and budget exhaustion are denied; verify successful calls create exactly one spend event.
+
+The AI Gateway has its own `AI_GATEWAY_INTERNAL_TOKEN` and model allowlists. It is currently a separate server-to-server endpoint; the Worker still calls providers directly. Do not assume the Gateway token protects Worker provider calls.
+
+## Snapshot observed during implementation (2026-11-19)
+- `ai_provider_routes`: 0 rows.
+- `ai_budgets`: 0 rows.
+- `ai_budget_reservations`: 0 rows.
+- `ai_budget_events`: 0 rows.
+- Active Cron jobs: the existing question-generation scheduler only; no AI Worker schedule.
+- `vault.secrets`: no registered secrets.
+- Deployed `ai-worker` and `ai-gateway` remain at their existing version 1; this feature branch has not been deployed.
+
+Therefore the code is prepared but deliberately fails closed. Do not enable real AI usage until provider prices, limits, secrets, and scheduling are configured and tested in a non-production environment.
