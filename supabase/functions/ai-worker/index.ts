@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { hasValidWorkerToken } from "./worker-auth.ts";
 
 type ProviderName = "openrouter" | "openai" | "gemini" | "xai";
 type Mode = "all" | "ai_requests" | "question_generation" | "ingestion";
@@ -125,6 +126,7 @@ type GatewayMessage = { role: "system" | "user" | "assistant"; content: string }
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+const WORKER_INTERNAL_TOKEN = Deno.env.get("AI_WORKER_INTERNAL_TOKEN") ?? "";
 const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY") ?? "";
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
 const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
@@ -149,12 +151,7 @@ function normalizeProvider(value: unknown): ProviderName | null {
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "access-control-allow-origin": "*",
-      "access-control-allow-headers": "authorization, content-type, x-request-id",
-      "access-control-allow-methods": "GET, POST, OPTIONS",
-    },
+    headers: { "content-type": "application/json; charset=utf-8" },
   });
 }
 
@@ -583,41 +580,69 @@ async function processIngestionJobs(limit: number): Promise<{ processed: number;
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return json({ ok: true }, 204);
+  if (req.method === "OPTIONS") return new Response(null, { status: 204 });
+
+  const url = new URL(req.url);
+  const isHealthPath = url.pathname === "/" || url.pathname === "/health";
+  const isRunPath = url.pathname === "/" || url.pathname === "/run";
 
   if (req.method === "GET") {
-    const { count: requests } = await supabase.from("ai_requests").select("id", { count: "exact", head: true }).eq("status", "queued");
-    const { count: questionJobs } = await supabase.from("question_generation_jobs").select("id", { count: "exact", head: true }).eq("job_status", "queued");
-    const { count: ingestionJobs } = await supabase.from("curriculum_ingestion_jobs").select("id", { count: "exact", head: true }).eq("job_status", "queued");
-    return json({
-      ok: true,
-      service: "ai-worker",
-      secrets: {
-        openrouter: Boolean(OPENROUTER_API_KEY),
-        openai: Boolean(OPENAI_API_KEY),
-        gemini: Boolean(GEMINI_API_KEY),
-        xai: Boolean(XAI_API_KEY),
-        supabase: Boolean(SUPABASE_URL && SERVICE_ROLE),
-      },
-      defaults: { provider: DEFAULT_PROVIDER },
-      queues: { requests, questionJobs, ingestionJobs },
-    });
+    if (!isHealthPath) return json({ error: "Not found" }, 404);
+    // Do not expose queue counts, provider-key presence, or runtime configuration.
+    return json({ ok: true, service: "ai-worker" });
   }
 
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
-  const url = new URL(req.url);
-  const mode = (url.searchParams.get("mode") ?? "all") as Mode;
-  const body = await req.json().catch(() => ({} as { mode?: Mode; limit?: number }));
-  const finalMode = (body?.mode ?? mode) as Mode;
-  const limit = Math.max(1, Math.min(25, Number(body?.limit ?? url.searchParams.get("limit") ?? 3) || 3));
+  if (!isRunPath) return json({ error: "Not found" }, 404);
+
+  // Supabase verify_jwt=true validates the bearer JWT at the edge gateway.
+  // This second, server-only secret prevents ordinary authenticated users from
+  // invoking service-role work through this function.
+  if (!WORKER_INTERNAL_TOKEN) {
+    return json({ error: "Worker execution is not configured" }, 503);
+  }
+  if (!(await hasValidWorkerToken(req, WORKER_INTERNAL_TOKEN))) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+
+  const contentLength = Number(req.headers.get("content-length") ?? "0");
+  if (contentLength > 8_192) return json({ error: "Request body too large" }, 413);
+
+  const rawBody = await req.text();
+  if (new TextEncoder().encode(rawBody).byteLength > 8_192) {
+    return json({ error: "Request body too large" }, 413);
+  }
+
+  let body: { mode?: Mode; limit?: number } = {};
+  if (rawBody.trim()) {
+    try {
+      body = JSON.parse(rawBody) as { mode?: Mode; limit?: number };
+    } catch {
+      return json({ error: "Invalid JSON body" }, 400);
+    }
+  }
+
+  const allowedModes: Mode[] = ["all", "ai_requests", "question_generation", "ingestion"];
+  const requestedMode = body.mode ?? url.searchParams.get("mode") ?? "all";
+  if (!allowedModes.includes(requestedMode as Mode)) {
+    return json({ error: "Invalid worker mode" }, 400);
+  }
+
+  const requestedLimit = body.limit ?? Number(url.searchParams.get("limit") ?? "3");
+  const limit = requestedLimit === undefined ? 3 : Number(requestedLimit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 25) {
+    return json({ error: "limit must be an integer between 1 and 25" }, 400);
+  }
 
   try {
+    const finalMode = requestedMode as Mode;
     const result: Record<string, unknown> = { mode: finalMode, limit };
     if (finalMode === "all" || finalMode === "ai_requests") result.ai_requests = await processAiRequests(limit);
     if (finalMode === "all" || finalMode === "question_generation") result.question_generation = await processQuestionGeneration(limit);
     if (finalMode === "all" || finalMode === "ingestion") result.ingestion = await processIngestionJobs(limit);
     return json(result);
   } catch (err) {
-    return json({ error: "Worker execution failed", message: err instanceof Error ? err.message : String(err) }, 500);
+    console.error("Worker execution failed", err);
+    return json({ error: "Worker execution failed" }, 500);
   }
 });
