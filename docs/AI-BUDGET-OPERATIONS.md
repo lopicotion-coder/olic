@@ -30,6 +30,8 @@ Set the Edge Function secret `AI_EMBEDDING_PRICE_PER_MILLION` to the current USD
 
 Question generation requires an enabled `exam_generator` provider route with a non-empty model, positive USD input/output prices, and a valid output-token cap. There is no fallback to a hardcoded provider or model.
 
+If the fallback settlement succeeds, the Worker continues with the already returned provider response instead of issuing another paid request. If both settlement attempts fail, a distinct terminal error prevents automatic job retry; the reservation is retained until expiry and a critical log requires provider-billing reconciliation.
+
 The migration adds:
 - `ai_background_budget_reservations`: pre-call reservations for operations that do not have an `ai_requests` row.
 - `ai_background_budget_events`: one billable event for each successful provider operation, including its type, route, measured tokens and cost.
