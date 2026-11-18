@@ -2,7 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { extractCurriculumDocument, chunkCurriculumPages } from "./document-parser.ts";
 import { hasValidWorkerToken } from "./worker-auth.ts";
-import { estimateInputTokens, estimateUsdCost } from "./budget-math.ts";
+import { estimateInputTokens, estimateOutputTokens, estimateUsdCost } from "./budget-math.ts";
 
 type ProviderName = "openrouter" | "openai" | "gemini" | "xai";
 type Mode = "all" | "ai_requests" | "learner_ai_requests" | "question_generation" | "ingestion" | "embeddings";
@@ -486,7 +486,7 @@ async function generateEmbeddingsWithBackgroundBudget(
 
   if (reserveError) {
     const message = String(reserveError.message ?? "");
-    if (message.toLowerCase().includes("token limits") && texts.length > 1) {
+    if (message.toLowerCase().includes("input token limit") && texts.length > 1) {
       // Respect tenant/platform input caps by splitting a large embedding batch.
       const midpoint = Math.ceil(texts.length / 2);
       const first = await generateEmbeddingsWithBackgroundBudget(texts.slice(0, midpoint), scope);
