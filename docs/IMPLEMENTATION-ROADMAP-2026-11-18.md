@@ -205,3 +205,7 @@ Every phase must include:
 - Output-token fallback now estimates approximately one token per 1.5 characters when provider usage metadata is missing, matching the conservative Arabic prompt estimator.
 - CI run #49 succeeded: Deno type-check plus Worker auth, document parser, budget-math and Gateway auth tests.
 - PostgreSQL migrations have not been executed against an isolated staging branch. The branch-creation tool requires cost approval; do not apply these migrations to production as a substitute.
+
+- Fixed lost-RPC-response idempotency: if a normal chat finalizer committed but its return was lost, the Worker no longer overwrites the already completed request as failed.
+- Background settlement fallback records a completed provider event and returns the same result, avoiding another provider call; terminal job handling applies only if both settlement paths fail.
+- Vault snapshot corrected: Vault is installed; scheduler secrets are not registered.
