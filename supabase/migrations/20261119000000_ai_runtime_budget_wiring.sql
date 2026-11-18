@@ -267,7 +267,9 @@ create table if not exists public.platform_ai_runtime_settings (
     or (
       provider_key is not null and length(trim(provider_key)) > 0
       and model_key is not null and length(trim(model_key)) > 0
+      and input_price_per_million is not null
       and input_price_per_million > 0
+      and output_price_per_million is not null
       and output_price_per_million > 0
       and monthly_budget_amount > 0
       and monthly_request_limit > 0
@@ -479,7 +481,8 @@ begin
    for update;
   if not found then raise exception 'Platform AI runtime has been disabled during request processing'; end if;
 
-  if p_input_tokens is null or p_input_tokens < 0
+  if p_provider_key is null or p_model_key is null
+     or p_input_tokens is null or p_input_tokens < 0
      or p_output_tokens is null or p_output_tokens < 0
      or p_billed_amount is null or p_billed_amount < 0
      or p_provider_key <> settings_row.provider_key
