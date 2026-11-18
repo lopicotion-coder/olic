@@ -776,6 +776,7 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
 
     let finalized = false;
     let reservationCreated = false;
+    let providerSettlement: { provider: ProviderName; model: string; inputTokens: number; outputTokens: number; billedAmount: number } | null = null;
     try {
       const { data: runtimeData, error: runtimeError } = await supabase.rpc("worker_get_platform_ai_runtime");
       dbError("Load platform learner AI runtime settings", runtimeError);
@@ -856,11 +857,12 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
       const result = await callProvider(provider, model, messages, maxOutputTokens);
       const latencyMs = Date.now() - startedAt;
       const inputTokens = result.promptTokens ?? estimatedInputTokens;
-      const outputTokens = result.completionTokens ?? 0;
+      const outputTokens = result.completionTokens ?? estimateOutputTokens(result.content);
       const cost = estimateUsdCost(inputTokens, outputTokens, {
         inputPricePerMillion: Number(runtime.input_price_per_million),
         outputPricePerMillion: Number(runtime.output_price_per_million),
       });
+      providerSettlement = { provider, model, inputTokens, outputTokens, billedAmount: cost };
 
       const { data: savedResponse, error: responseError } = await supabase
         .from("learner_ai_responses")
@@ -932,7 +934,19 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
         continue;
       }
 
-      if (reservationCreated) {
+      if (providerSettlement) {
+        const { error: settlementError } = await supabase.rpc("worker_fail_learner_ai_request_after_provider", {
+          p_request_id: row.id,
+          p_provider_key: providerSettlement.provider,
+          p_model_key: providerSettlement.model,
+          p_input_tokens: providerSettlement.inputTokens,
+          p_output_tokens: providerSettlement.outputTokens,
+          p_billed_amount: providerSettlement.billedAmount,
+          p_failure_reason: err instanceof Error ? err.message.slice(0, 1000) : "Provider succeeded but response persistence failed",
+          p_metadata: { stage: "post_provider_persistence" },
+        });
+        if (settlementError) console.error("CRITICAL: provider succeeded but platform AI spend settlement failed", row.id, settlementError);
+      } else if (reservationCreated) {
         const { error: reservationReleaseError } = await supabase.rpc(
           "worker_release_learner_ai_budget_reservation",
           { p_request_id: row.id },
@@ -941,7 +955,7 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
       }
 
       failed += 1;
-      const terminal = Number(row.attempts) >= Number(row.max_attempts);
+      const terminal = providerSettlement !== null || Number(row.attempts) >= Number(row.max_attempts);
       const { error: releaseError } = await supabase.from("learner_ai_requests").update({
         status: terminal ? "failed" : "queued",
         completed_at: terminal ? new Date().toISOString() : null,
@@ -984,6 +998,7 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
 
     let finalized = false;
     let reservationCreated = false;
+    let providerSettlement: { provider: ProviderName; model: string; budgetId: string; inputTokens: number; outputTokens: number; billedAmount: number } | null = null;
     try {
       const route = await selectRoute(row.tenant_id, row.school_id, row.feature_key);
       if (!route) throw new Error("AI_PROVIDER_ROUTE_NOT_CONFIGURED");
@@ -1035,11 +1050,12 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
 
       const result = await callProvider(provider, model, messages, maxOutputTokens);
       const inputTokens = result.promptTokens ?? estimatedInputTokens;
-      const outputTokens = result.completionTokens ?? 0;
+      const outputTokens = result.completionTokens ?? estimateOutputTokens(result.content);
       const cost = estimateUsdCost(inputTokens, outputTokens, {
         inputPricePerMillion: Number(route.input_price_per_million),
         outputPricePerMillion: Number(route.output_price_per_million),
       });
+      providerSettlement = { provider, model, budgetId: reservation.budget_id, inputTokens, outputTokens, billedAmount: cost };
 
       const { data: savedResponse, error: responseError } = await supabase.from("ai_responses").upsert({
         request_id: row.id,
@@ -1118,7 +1134,20 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
         continue;
       }
 
-      if (reservationCreated) {
+      if (providerSettlement) {
+        const { error: settlementError } = await supabase.rpc("worker_fail_ai_request_after_provider", {
+          p_request_id: row.id,
+          p_budget_id: providerSettlement.budgetId,
+          p_provider_key: providerSettlement.provider,
+          p_model_key: providerSettlement.model,
+          p_input_tokens: providerSettlement.inputTokens,
+          p_output_tokens: providerSettlement.outputTokens,
+          p_billed_amount: providerSettlement.billedAmount,
+          p_failure_reason: err instanceof Error ? err.message.slice(0, 1000) : "Provider succeeded but response persistence failed",
+          p_metadata: { stage: "post_provider_persistence" },
+        });
+        if (settlementError) console.error("CRITICAL: provider succeeded but tenant AI spend settlement failed", row.id, settlementError);
+      } else if (reservationCreated) {
         const { error: reservationReleaseError } = await supabase.rpc(
           "worker_release_ai_budget_reservation",
           { p_request_id: row.id },
@@ -1127,7 +1156,7 @@ async function processAiRequests(limit: number): Promise<{ processed: number; fa
       }
 
       failed += 1;
-      const terminal = Number(row.attempts) >= Number(row.max_attempts ?? 3);
+      const terminal = providerSettlement !== null || Number(row.attempts) >= Number(row.max_attempts ?? 3);
       const delayMinutes = retryDelayMinutes(Number(row.attempts) || 1);
       const { error: retryError } = await supabase.from("ai_requests").update({
         status: terminal ? "failed" : "queued",
