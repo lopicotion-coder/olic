@@ -93,3 +93,6 @@ The AI Gateway has its own `AI_GATEWAY_INTERNAL_TOKEN` and model allowlists. It 
 - Deployed `ai-worker` and `ai-gateway` remain at their existing version 1; this feature branch has not been deployed.
 
 Therefore the code is prepared but deliberately fails closed. Do not enable real AI usage until provider prices, limits, secrets, and scheduling are configured and tested in a non-production environment.
+
+
+Background settlement fallback: if a provider responds but normal event finalization fails, the Worker now calls `worker_fail_background_ai_operation` to record the actual provider cost as a failed operation (including over-budget/token-limit metadata) and release the reservation. If that fallback call also fails, it retains the reservation until expiry and emits a critical log for manual reconciliation.
