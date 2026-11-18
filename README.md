@@ -14,6 +14,8 @@ The connected Supabase project was identified by its school/tenant/student/guard
 - Storage buckets: 1 (`school-files`, private)
 - Edge Functions observed: 0
 
+A security hardening follow-up was applied to the live Supabase project on 2026-11-18. See `docs/SECURITY-REVIEW-2026-11-18.md` for the scope and the remaining follow-up items.
+
 The repository currently contains a sanitized project inventory, generated public database types, the applied migration history ledger, and encrypted backup automation.
 
 ## Important: production frontend source is not yet present
