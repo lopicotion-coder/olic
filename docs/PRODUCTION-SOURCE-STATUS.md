@@ -17,6 +17,12 @@ The connected Supabase project matching My School's school/tenant/student/guardi
 
 The separate project `nhkorcyonlvvfnufwycf` is Selsep EDU and must not be merged into My School.
 
+## Hardening follow-up
+
+A production hardening follow-up was applied on 2026-11-18 and is documented separately in `docs/SECURITY-REVIEW-2026-11-18.md`.
+
+That follow-up did **not** recover the frontend/application source. It only tightened the live Supabase database/backend path and then verified the expected post-conditions.
+
 ## Confirmed frontend candidates
 
 A Lovable project named **My School Command Center** was found. Its source is a TanStack Start/React demo with fictional seed data, browser-local state, and a placeholder `src/routes/index.tsx`. It is unpublished and is archived in the private `lopicotion-coder/draft` repository.
@@ -45,4 +51,4 @@ It is not verified as the source that powers the production My School applicatio
 
 The current GitHub repository `olic` is Public. Therefore no production rows, Auth user records, password hashes, Storage object bytes, service-role keys, database passwords, OAuth/SMTP credentials, or plaintext dumps are committed here.
 
-All Supabase operations performed during this inspection were read-only. No production schema, Auth, Storage, user, or billing configuration was changed.
+The source-recovery snapshot itself was read-only. The later hardening follow-up was a separate production change and is documented in `docs/SECURITY-REVIEW-2026-11-18.md`.
