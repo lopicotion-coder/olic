@@ -1237,8 +1237,9 @@ begin
     reservation_row.tenant_id, reservation_row.school_id, reservation_row.requester_user_id,
     reservation_row.feature_key, reservation_row.operation_kind, p_provider_key, p_model_key,
     p_input_tokens, p_output_tokens, p_billed_amount, reservation_row.currency,
-    'failed',
+    'completed',
     coalesce(p_metadata, '{}'::jsonb) || jsonb_build_object(
+      'settlement_fallback', true,
       'failure_reason', left(coalesce(p_failure_reason, 'post-provider settlement failure'), 1000),
       'budget_overrun', budget_overrun,
       'token_limit_exceeded', token_limit_exceeded
