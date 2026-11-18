@@ -95,3 +95,5 @@ Do not interpret these branch changes as deployed production capability. The new
 - Fixed lost-RPC-response idempotency: if a normal chat finalizer committed but its return was lost, the Worker no longer overwrites the already completed request as failed.
 - Background settlement fallback records a completed provider event and returns the same result, avoiding another provider call; terminal job handling applies only if both settlement paths fail.
 - Vault snapshot corrected: Vault is installed; scheduler secrets are not registered.
+
+- Added a paid-operation completion callback to all Worker paths (QGen, ingestion/queued embeddings, and tenant/platform RAG). Any downstream error after a billed provider call marks the parent job/request terminal instead of issuing a duplicate paid call.
