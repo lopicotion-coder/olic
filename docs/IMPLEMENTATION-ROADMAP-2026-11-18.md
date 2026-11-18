@@ -175,3 +175,12 @@ Every phase must include:
 - Added a GitHub Actions workflow to run the worker-auth tests on pull requests.
 - The worker hardening is branch-only and is **not deployed**. Deno is not installed in the current authoring environment, so local Deno test execution has not been completed; CI must verify it.
 - No production database, Auth settings, Storage objects, deployed Edge Functions or billing configuration were modified in this implementation pass.
+
+
+## AI runtime budget enforcement — 2026-11-19
+- Added tenant/school budget reservation and atomic settlement to the Worker for standard AI requests.
+- Added a separate platform AI budget for independent learner tutoring; it is disabled by default and does not draw from school budgets.
+- Added explicit USD model pricing and RAG embedding pricing checks. Missing routes/prices/budgets fail closed.
+- Worker now records spend and completes the request in the same database transaction that releases the budget reservation.
+- Added unit-tested budget estimate helpers and included their tests in GitHub Actions.
+- This remains branch-only and is not deployed. Current production snapshot has zero provider routes and zero AI budget rows; only the existing question-generation Cron is active, and Vault has no registered secrets. A protected recurring Worker scheduler remains to be configured before activation.
