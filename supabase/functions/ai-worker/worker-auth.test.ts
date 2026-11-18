@@ -31,3 +31,15 @@ Deno.test("accepts the configured internal token", async () => {
   });
   assertEquals(await hasValidWorkerToken(request, token), true);
 });
+
+import { isUnsettledPaidProviderError } from "./background-budget-errors.ts";
+
+Deno.test("terminally detects paid provider calls with unsettled spend", () => {
+  assertEquals(
+    isUnsettledPaidProviderError(new Error("BACKGROUND_AI_SETTLEMENT_UNAVAILABLE_AFTER_PROVIDER_SUCCESS:op-123")),
+    true,
+  );
+  assertEquals(isUnsettledPaidProviderError(new Error("temporary network error")), false);
+  assertEquals(isUnsettledPaidProviderError("BACKGROUND_AI_SETTLEMENT_UNAVAILABLE_AFTER_PROVIDER_SUCCESS:op-123"), false);
+  assertEquals(isUnsettledPaidProviderError(null), false);
+});
