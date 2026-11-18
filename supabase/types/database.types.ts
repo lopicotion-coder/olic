@@ -314,6 +314,87 @@ export type Database = {
           },
         ]
       }
+      ai_rag_evidence: {
+        Row: {
+          chunk_id: string
+          citation_label: string | null
+          created_at: string
+          id: string
+          request_id: string
+          response_id: string | null
+          retrieval_rank: number
+          school_id: string | null
+          selected_for_answer: boolean
+          similarity_score: number | null
+          source_excerpt: string
+          tenant_id: string
+        }
+        Insert: {
+          chunk_id: string
+          citation_label?: string | null
+          created_at?: string
+          id?: string
+          request_id: string
+          response_id?: string | null
+          retrieval_rank: number
+          school_id?: string | null
+          selected_for_answer?: boolean
+          similarity_score?: number | null
+          source_excerpt: string
+          tenant_id: string
+        }
+        Update: {
+          chunk_id?: string
+          citation_label?: string | null
+          created_at?: string
+          id?: string
+          request_id?: string
+          response_id?: string | null
+          retrieval_rank?: number
+          school_id?: string | null
+          selected_for_answer?: boolean
+          similarity_score?: number | null
+          source_excerpt?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_rag_evidence_chunk_id_fkey"
+            columns: ["chunk_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_chunks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_rag_evidence_request_id_fkey"
+            columns: ["request_id"]
+            isOneToOne: false
+            referencedRelation: "ai_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_rag_evidence_response_id_fkey"
+            columns: ["response_id"]
+            isOneToOne: false
+            referencedRelation: "ai_responses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_rag_evidence_school_id_tenant_id_fkey"
+            columns: ["school_id", "tenant_id"]
+            isOneToOne: false
+            referencedRelation: "schools"
+            referencedColumns: ["id", "tenant_id"]
+          },
+          {
+            foreignKeyName: "ai_rag_evidence_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_requests: {
         Row: {
           completed_at: string | null
@@ -1370,6 +1451,309 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "students"
             referencedColumns: ["id", "tenant_id", "school_id"]
+          },
+        ]
+      }
+      curriculum_chunks: {
+        Row: {
+          chapter_title: string | null
+          chunk_index: number
+          content_sha256: string
+          content_text: string
+          created_at: string
+          embedded_at: string | null
+          embedding: string | null
+          embedding_model_key: string | null
+          id: string
+          last_error: string | null
+          metadata: Json
+          page_end: number | null
+          page_start: number | null
+          search_vector: unknown
+          section_title: string | null
+          source_id: string
+          source_version_id: string
+          status: string
+          token_count: number | null
+          updated_at: string
+        }
+        Insert: {
+          chapter_title?: string | null
+          chunk_index: number
+          content_sha256: string
+          content_text: string
+          created_at?: string
+          embedded_at?: string | null
+          embedding?: string | null
+          embedding_model_key?: string | null
+          id?: string
+          last_error?: string | null
+          metadata?: Json
+          page_end?: number | null
+          page_start?: number | null
+          search_vector?: unknown
+          section_title?: string | null
+          source_id: string
+          source_version_id: string
+          status?: string
+          token_count?: number | null
+          updated_at?: string
+        }
+        Update: {
+          chapter_title?: string | null
+          chunk_index?: number
+          content_sha256?: string
+          content_text?: string
+          created_at?: string
+          embedded_at?: string | null
+          embedding?: string | null
+          embedding_model_key?: string | null
+          id?: string
+          last_error?: string | null
+          metadata?: Json
+          page_end?: number | null
+          page_start?: number | null
+          search_vector?: unknown
+          section_title?: string | null
+          source_id?: string
+          source_version_id?: string
+          status?: string
+          token_count?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "curriculum_chunks_source_version_id_source_id_fkey"
+            columns: ["source_version_id", "source_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_source_versions"
+            referencedColumns: ["id", "source_id"]
+          },
+        ]
+      }
+      curriculum_ingestion_jobs: {
+        Row: {
+          attempts: number
+          available_at: string
+          created_at: string
+          id: string
+          job_status: string
+          last_error: string | null
+          locked_at: string | null
+          locked_by: string | null
+          max_attempts: number
+          metadata: Json
+          source_version_id: string
+          stage: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          available_at?: string
+          created_at?: string
+          id?: string
+          job_status?: string
+          last_error?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          max_attempts?: number
+          metadata?: Json
+          source_version_id: string
+          stage?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          available_at?: string
+          created_at?: string
+          id?: string
+          job_status?: string
+          last_error?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          max_attempts?: number
+          metadata?: Json
+          source_version_id?: string
+          stage?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "curriculum_ingestion_jobs_source_version_id_fkey"
+            columns: ["source_version_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_source_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      curriculum_source_versions: {
+        Row: {
+          academic_year_label: string | null
+          created_at: string
+          created_by: string | null
+          extracted_text_sha256: string | null
+          extraction_metadata: Json
+          file_sha256: string | null
+          id: string
+          ingestion_status: string
+          page_count: number | null
+          publication_year: number | null
+          source_id: string
+          storage_bucket: string
+          storage_object_path: string | null
+          updated_at: string
+          version_label: string
+        }
+        Insert: {
+          academic_year_label?: string | null
+          created_at?: string
+          created_by?: string | null
+          extracted_text_sha256?: string | null
+          extraction_metadata?: Json
+          file_sha256?: string | null
+          id?: string
+          ingestion_status?: string
+          page_count?: number | null
+          publication_year?: number | null
+          source_id: string
+          storage_bucket?: string
+          storage_object_path?: string | null
+          updated_at?: string
+          version_label: string
+        }
+        Update: {
+          academic_year_label?: string | null
+          created_at?: string
+          created_by?: string | null
+          extracted_text_sha256?: string | null
+          extraction_metadata?: Json
+          file_sha256?: string | null
+          id?: string
+          ingestion_status?: string
+          page_count?: number | null
+          publication_year?: number | null
+          source_id?: string
+          storage_bucket?: string
+          storage_object_path?: string | null
+          updated_at?: string
+          version_label?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "curriculum_source_versions_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      curriculum_sources: {
+        Row: {
+          country_code: string
+          created_at: string
+          created_by: string | null
+          curriculum_board: string | null
+          education_system: string | null
+          grade_code: string
+          grade_label: string
+          id: string
+          language_code: string
+          permitted_uses: string[]
+          publication_year: number | null
+          publisher: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          rights_basis: string | null
+          rights_reference: string | null
+          rights_status: string
+          school_id: string | null
+          sharing_scope: string
+          source_kind: string
+          status: string
+          storage_bucket: string
+          storage_object_path: string | null
+          subject_code: string
+          subject_name: string
+          tenant_id: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          country_code?: string
+          created_at?: string
+          created_by?: string | null
+          curriculum_board?: string | null
+          education_system?: string | null
+          grade_code: string
+          grade_label: string
+          id?: string
+          language_code?: string
+          permitted_uses?: string[]
+          publication_year?: number | null
+          publisher?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          rights_basis?: string | null
+          rights_reference?: string | null
+          rights_status?: string
+          school_id?: string | null
+          sharing_scope?: string
+          source_kind?: string
+          status?: string
+          storage_bucket?: string
+          storage_object_path?: string | null
+          subject_code: string
+          subject_name: string
+          tenant_id?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          country_code?: string
+          created_at?: string
+          created_by?: string | null
+          curriculum_board?: string | null
+          education_system?: string | null
+          grade_code?: string
+          grade_label?: string
+          id?: string
+          language_code?: string
+          permitted_uses?: string[]
+          publication_year?: number | null
+          publisher?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          rights_basis?: string | null
+          rights_reference?: string | null
+          rights_status?: string
+          school_id?: string | null
+          sharing_scope?: string
+          source_kind?: string
+          status?: string
+          storage_bucket?: string
+          storage_object_path?: string | null
+          subject_code?: string
+          subject_name?: string
+          tenant_id?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "curriculum_sources_school_tenant_fk"
+            columns: ["school_id", "tenant_id"]
+            isOneToOne: false
+            referencedRelation: "schools"
+            referencedColumns: ["id", "tenant_id"]
+          },
+          {
+            foreignKeyName: "curriculum_sources_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -2961,6 +3345,652 @@ export type Database = {
           },
         ]
       }
+      question_attempts: {
+        Row: {
+          answer_payload: Json
+          attempt_number: number
+          exposure_id: string
+          feedback: string | null
+          id: string
+          is_correct: boolean | null
+          max_score: number | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          school_id: string
+          score: number | null
+          student_id: string
+          submitted_at: string
+          tenant_id: string
+        }
+        Insert: {
+          answer_payload: Json
+          attempt_number: number
+          exposure_id: string
+          feedback?: string | null
+          id?: string
+          is_correct?: boolean | null
+          max_score?: number | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          school_id: string
+          score?: number | null
+          student_id: string
+          submitted_at?: string
+          tenant_id: string
+        }
+        Update: {
+          answer_payload?: Json
+          attempt_number?: number
+          exposure_id?: string
+          feedback?: string | null
+          id?: string
+          is_correct?: boolean | null
+          max_score?: number | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          school_id?: string
+          score?: number | null
+          student_id?: string
+          submitted_at?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_attempts_exposure_id_tenant_id_school_id_fkey"
+            columns: ["exposure_id", "tenant_id", "school_id"]
+            isOneToOne: false
+            referencedRelation: "student_question_exposures"
+            referencedColumns: ["id", "tenant_id", "school_id"]
+          },
+          {
+            foreignKeyName: "question_attempts_student_id_tenant_id_school_id_fkey"
+            columns: ["student_id", "tenant_id", "school_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id", "tenant_id", "school_id"]
+          },
+        ]
+      }
+      question_bank: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          choices: Json
+          cognitive_level: string | null
+          content_fingerprint: string | null
+          created_at: string
+          created_by: string | null
+          difficulty: number
+          embedding: string | null
+          embedding_model_key: string | null
+          generated_by_request_id: string | null
+          grade_code: string
+          grade_label: string
+          id: string
+          language_code: string
+          lesson_title: string | null
+          model_key: string | null
+          origin_type: string
+          prompt_version: string | null
+          provider_key: string | null
+          question_text: string
+          question_type: string
+          record_status: string
+          review_status: string
+          school_id: string | null
+          search_vector: unknown
+          sharing_scope: string
+          subject_code: string
+          subject_name: string
+          tags: string[]
+          tenant_id: string | null
+          unit_title: string | null
+          updated_at: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          choices?: Json
+          cognitive_level?: string | null
+          content_fingerprint?: string | null
+          created_at?: string
+          created_by?: string | null
+          difficulty?: number
+          embedding?: string | null
+          embedding_model_key?: string | null
+          generated_by_request_id?: string | null
+          grade_code: string
+          grade_label: string
+          id?: string
+          language_code?: string
+          lesson_title?: string | null
+          model_key?: string | null
+          origin_type: string
+          prompt_version?: string | null
+          provider_key?: string | null
+          question_text: string
+          question_type: string
+          record_status?: string
+          review_status?: string
+          school_id?: string | null
+          search_vector?: unknown
+          sharing_scope?: string
+          subject_code: string
+          subject_name: string
+          tags?: string[]
+          tenant_id?: string | null
+          unit_title?: string | null
+          updated_at?: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          choices?: Json
+          cognitive_level?: string | null
+          content_fingerprint?: string | null
+          created_at?: string
+          created_by?: string | null
+          difficulty?: number
+          embedding?: string | null
+          embedding_model_key?: string | null
+          generated_by_request_id?: string | null
+          grade_code?: string
+          grade_label?: string
+          id?: string
+          language_code?: string
+          lesson_title?: string | null
+          model_key?: string | null
+          origin_type?: string
+          prompt_version?: string | null
+          provider_key?: string | null
+          question_text?: string
+          question_type?: string
+          record_status?: string
+          review_status?: string
+          school_id?: string | null
+          search_vector?: unknown
+          sharing_scope?: string
+          subject_code?: string
+          subject_name?: string
+          tags?: string[]
+          tenant_id?: string | null
+          unit_title?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_bank_generated_by_request_id_fkey"
+            columns: ["generated_by_request_id"]
+            isOneToOne: false
+            referencedRelation: "ai_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_bank_school_tenant_fk"
+            columns: ["school_id", "tenant_id"]
+            isOneToOne: false
+            referencedRelation: "schools"
+            referencedColumns: ["id", "tenant_id"]
+          },
+          {
+            foreignKeyName: "question_bank_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      question_bank_answers: {
+        Row: {
+          answer_payload: Json
+          answer_reveal_policy: string
+          created_at: string
+          explanation: string | null
+          marking_rubric: Json
+          question_id: string
+          updated_at: string
+        }
+        Insert: {
+          answer_payload: Json
+          answer_reveal_policy?: string
+          created_at?: string
+          explanation?: string | null
+          marking_rubric?: Json
+          question_id: string
+          updated_at?: string
+        }
+        Update: {
+          answer_payload?: Json
+          answer_reveal_policy?: string
+          created_at?: string
+          explanation?: string | null
+          marking_rubric?: Json
+          question_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_bank_answers_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: true
+            referencedRelation: "question_bank"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      question_exposure_events: {
+        Row: {
+          event_type: string
+          exposure_id: string
+          id: string
+          idempotency_key: string
+          metadata: Json
+          occurred_at: string
+          received_at: string
+        }
+        Insert: {
+          event_type: string
+          exposure_id: string
+          id?: string
+          idempotency_key: string
+          metadata?: Json
+          occurred_at?: string
+          received_at?: string
+        }
+        Update: {
+          event_type?: string
+          exposure_id?: string
+          id?: string
+          idempotency_key?: string
+          metadata?: Json
+          occurred_at?: string
+          received_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_exposure_events_exposure_id_fkey"
+            columns: ["exposure_id"]
+            isOneToOne: false
+            referencedRelation: "student_question_exposures"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      question_generation_batches: {
+        Row: {
+          accepted_count: number
+          batch_status: string
+          completed_at: string | null
+          created_at: string
+          difficulty_distribution: Json
+          generated_count: number
+          grade_code: string
+          id: string
+          lesson_title: string | null
+          model_key: string | null
+          prompt_version: string | null
+          provider_key: string | null
+          question_types: string[]
+          rejected_count: number
+          requested_by: string | null
+          requested_count: number
+          school_id: string | null
+          sharing_scope: string
+          source_version_id: string
+          started_at: string | null
+          subject_code: string
+          tenant_id: string | null
+          unit_title: string | null
+          updated_at: string
+        }
+        Insert: {
+          accepted_count?: number
+          batch_status?: string
+          completed_at?: string | null
+          created_at?: string
+          difficulty_distribution?: Json
+          generated_count?: number
+          grade_code: string
+          id?: string
+          lesson_title?: string | null
+          model_key?: string | null
+          prompt_version?: string | null
+          provider_key?: string | null
+          question_types?: string[]
+          rejected_count?: number
+          requested_by?: string | null
+          requested_count: number
+          school_id?: string | null
+          sharing_scope?: string
+          source_version_id: string
+          started_at?: string | null
+          subject_code: string
+          tenant_id?: string | null
+          unit_title?: string | null
+          updated_at?: string
+        }
+        Update: {
+          accepted_count?: number
+          batch_status?: string
+          completed_at?: string | null
+          created_at?: string
+          difficulty_distribution?: Json
+          generated_count?: number
+          grade_code?: string
+          id?: string
+          lesson_title?: string | null
+          model_key?: string | null
+          prompt_version?: string | null
+          provider_key?: string | null
+          question_types?: string[]
+          rejected_count?: number
+          requested_by?: string | null
+          requested_count?: number
+          school_id?: string | null
+          sharing_scope?: string
+          source_version_id?: string
+          started_at?: string | null
+          subject_code?: string
+          tenant_id?: string | null
+          unit_title?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_generation_batches_school_tenant_fk"
+            columns: ["school_id", "tenant_id"]
+            isOneToOne: false
+            referencedRelation: "schools"
+            referencedColumns: ["id", "tenant_id"]
+          },
+          {
+            foreignKeyName: "question_generation_batches_source_version_id_fkey"
+            columns: ["source_version_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_source_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_generation_batches_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      question_generation_jobs: {
+        Row: {
+          attempts: number
+          available_at: string
+          batch_id: string | null
+          created_at: string
+          id: string
+          idempotency_key: string
+          job_status: string
+          job_type: string
+          last_error: string | null
+          locked_at: string | null
+          locked_by: string | null
+          max_attempts: number
+          payload: Json
+          schedule_id: string | null
+          source_version_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          available_at?: string
+          batch_id?: string | null
+          created_at?: string
+          id?: string
+          idempotency_key: string
+          job_status?: string
+          job_type: string
+          last_error?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          max_attempts?: number
+          payload?: Json
+          schedule_id?: string | null
+          source_version_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          available_at?: string
+          batch_id?: string | null
+          created_at?: string
+          id?: string
+          idempotency_key?: string
+          job_status?: string
+          job_type?: string
+          last_error?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          max_attempts?: number
+          payload?: Json
+          schedule_id?: string | null
+          source_version_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_generation_jobs_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "question_generation_batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_generation_jobs_schedule_id_fkey"
+            columns: ["schedule_id"]
+            isOneToOne: false
+            referencedRelation: "question_generation_schedules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_generation_jobs_source_version_id_fkey"
+            columns: ["source_version_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_source_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      question_generation_schedules: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          day_of_month: number | null
+          days_of_week: number[]
+          frequency: string
+          grade_code: string
+          id: string
+          interval_minutes: number | null
+          is_enabled: boolean
+          last_run_at: string | null
+          lesson_title: string | null
+          local_run_time: string
+          low_watermark: number
+          next_run_at: string | null
+          question_types: string[]
+          school_id: string | null
+          source_version_id: string
+          subject_code: string
+          target_question_count: number
+          tenant_id: string
+          timezone: string
+          unit_title: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          day_of_month?: number | null
+          days_of_week?: number[]
+          frequency?: string
+          grade_code: string
+          id?: string
+          interval_minutes?: number | null
+          is_enabled?: boolean
+          last_run_at?: string | null
+          lesson_title?: string | null
+          local_run_time?: string
+          low_watermark?: number
+          next_run_at?: string | null
+          question_types?: string[]
+          school_id?: string | null
+          source_version_id: string
+          subject_code: string
+          target_question_count?: number
+          tenant_id: string
+          timezone?: string
+          unit_title?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          day_of_month?: number | null
+          days_of_week?: number[]
+          frequency?: string
+          grade_code?: string
+          id?: string
+          interval_minutes?: number | null
+          is_enabled?: boolean
+          last_run_at?: string | null
+          lesson_title?: string | null
+          local_run_time?: string
+          low_watermark?: number
+          next_run_at?: string | null
+          question_types?: string[]
+          school_id?: string | null
+          source_version_id?: string
+          subject_code?: string
+          target_question_count?: number
+          tenant_id?: string
+          timezone?: string
+          unit_title?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_generation_schedules_school_id_tenant_id_fkey"
+            columns: ["school_id", "tenant_id"]
+            isOneToOne: false
+            referencedRelation: "schools"
+            referencedColumns: ["id", "tenant_id"]
+          },
+          {
+            foreignKeyName: "question_generation_schedules_source_version_id_fkey"
+            columns: ["source_version_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_source_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_generation_schedules_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      question_quality_checks: {
+        Row: {
+          check_key: string
+          created_at: string
+          details: Json
+          id: string
+          question_id: string
+          result: string
+          score: number | null
+          validator_model: string | null
+          validator_provider: string | null
+        }
+        Insert: {
+          check_key: string
+          created_at?: string
+          details?: Json
+          id?: string
+          question_id: string
+          result: string
+          score?: number | null
+          validator_model?: string | null
+          validator_provider?: string | null
+        }
+        Update: {
+          check_key?: string
+          created_at?: string
+          details?: Json
+          id?: string
+          question_id?: string
+          result?: string
+          score?: number | null
+          validator_model?: string | null
+          validator_provider?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_quality_checks_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "question_bank"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      question_sources: {
+        Row: {
+          chunk_id: string
+          citation_order: number
+          created_at: string
+          evidence_excerpt: string | null
+          grounding_score: number | null
+          id: string
+          question_id: string
+          relation_type: string
+        }
+        Insert: {
+          chunk_id: string
+          citation_order?: number
+          created_at?: string
+          evidence_excerpt?: string | null
+          grounding_score?: number | null
+          id?: string
+          question_id: string
+          relation_type?: string
+        }
+        Update: {
+          chunk_id?: string
+          citation_order?: number
+          created_at?: string
+          evidence_excerpt?: string | null
+          grounding_score?: number | null
+          id?: string
+          question_id?: string
+          relation_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_sources_chunk_id_fkey"
+            columns: ["chunk_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_chunks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_sources_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "question_bank"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       restore_jobs: {
         Row: {
           backup_job_id: string
@@ -3992,6 +5022,108 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "students"
             referencedColumns: ["id", "tenant_id", "school_id"]
+          },
+        ]
+      }
+      student_question_exposures: {
+        Row: {
+          assessment_id: string | null
+          assigned_at: string
+          assignment_id: string | null
+          created_at: string
+          display_count: number
+          exposure_status: string
+          first_answered_at: string | null
+          first_delivered_at: string | null
+          first_opened_at: string | null
+          first_rendered_at: string | null
+          id: string
+          last_answered_at: string | null
+          last_event_at: string
+          question_id: string
+          reviewed_at: string | null
+          school_id: string
+          student_id: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          assessment_id?: string | null
+          assigned_at?: string
+          assignment_id?: string | null
+          created_at?: string
+          display_count?: number
+          exposure_status?: string
+          first_answered_at?: string | null
+          first_delivered_at?: string | null
+          first_opened_at?: string | null
+          first_rendered_at?: string | null
+          id?: string
+          last_answered_at?: string | null
+          last_event_at?: string
+          question_id: string
+          reviewed_at?: string | null
+          school_id: string
+          student_id: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          assessment_id?: string | null
+          assigned_at?: string
+          assignment_id?: string | null
+          created_at?: string
+          display_count?: number
+          exposure_status?: string
+          first_answered_at?: string | null
+          first_delivered_at?: string | null
+          first_opened_at?: string | null
+          first_rendered_at?: string | null
+          id?: string
+          last_answered_at?: string | null
+          last_event_at?: string
+          question_id?: string
+          reviewed_at?: string | null
+          school_id?: string
+          student_id?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "student_question_exposures_assessment_id_fkey"
+            columns: ["assessment_id"]
+            isOneToOne: false
+            referencedRelation: "assessments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "student_question_exposures_assignment_id_fkey"
+            columns: ["assignment_id"]
+            isOneToOne: false
+            referencedRelation: "assignments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "student_question_exposures_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "question_bank"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "student_question_exposures_student_id_tenant_id_school_id_fkey"
+            columns: ["student_id", "tenant_id", "school_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id", "tenant_id", "school_id"]
+          },
+          {
+            foreignKeyName: "student_question_exposures_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -5324,7 +6456,29 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      match_curriculum_chunks: {
+        Args: {
+          p_grade_code?: string
+          p_match_count?: number
+          p_match_threshold?: number
+          p_query_embedding: string
+          p_subject_code?: string
+        }
+        Returns: {
+          chapter_title: string
+          chunk_id: string
+          content_text: string
+          grade_code: string
+          page_end: number
+          page_start: number
+          section_title: string
+          similarity: number
+          source_id: string
+          source_title: string
+          subject_code: string
+          version_label: string
+        }[]
+      }
     }
     Enums: {
       academic_period_status: "planned" | "active" | "completed" | "archived"
