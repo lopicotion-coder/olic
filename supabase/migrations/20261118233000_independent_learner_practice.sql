@@ -75,6 +75,22 @@ create table if not exists public.learner_question_exposure_events (
 create index if not exists learner_question_exposure_events_recent_idx
   on public.learner_question_exposure_events(exposure_id, occurred_at desc);
 
+create table if not exists public.learner_account_link_codes (
+  id uuid primary key default gen_random_uuid(),
+  learner_profile_id uuid not null references public.learner_profiles(id) on delete cascade,
+  code_hash char(64) not null unique check (code_hash ~ '^[0-9a-f]{64}$'),
+  created_by_user_id uuid not null references auth.users(id) on delete restrict,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  used_by_user_id uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  check (expires_at > created_at)
+);
+
+alter table public.learner_account_link_codes enable row level security;
+revoke all on public.learner_account_link_codes from public, anon, authenticated, myschool_runtime;
+grant all on public.learner_account_link_codes to service_role;
+
 create or replace function app.has_learner_practice_access()
 returns boolean
 language sql
@@ -214,8 +230,115 @@ grant select on public.learner_question_exposures,
   public.learner_question_attempts
 to authenticated, myschool_runtime;
 
-revoke all on function public.get_learner_practice_set(uuid, text, text, text, integer, smallint, integer) from public, anon;
-revoke all on function public.submit_learner_question_attempt(uuid, uuid, jsonb, text) from public, anon;
+grant all on public.learner_question_exposures,
+  public.learner_question_attempts,
+  public.learner_question_exposure_events
+to service_role;
+
+create or replace function public.create_learner_account_link_code(
+  p_learner_profile_id uuid
+)
+returns text
+language plpgsql
+security definer
+set search_path = pg_catalog, public, auth, extensions
+as $$
+declare
+  actor_id uuid := auth.uid();
+  raw_code text;
+  hashed_code text;
+begin
+  if actor_id is null then raise exception 'Authentication required'; end if;
+  if not exists (
+    select 1
+    from public.learner_guardians g
+    where g.learner_profile_id = p_learner_profile_id
+      and g.guardian_user_id = actor_id
+      and g.link_status = 'active'
+      and g.can_manage_learning
+  ) then
+    raise exception 'Active guardian permission is required to create a learner link code';
+  end if;
+
+  raw_code := encode(extensions.gen_random_bytes(24), 'hex');
+  hashed_code := encode(extensions.digest(raw_code, 'sha256'), 'hex');
+
+  delete from public.learner_account_link_codes
+  where learner_profile_id = p_learner_profile_id
+    and used_at is null;
+
+  insert into public.learner_account_link_codes (
+    learner_profile_id, code_hash, created_by_user_id, expires_at
+  )
+  values (
+    p_learner_profile_id,
+    hashed_code,
+    actor_id,
+    now() + interval '15 minutes'
+  );
+
+  return raw_code;
+end;
+$$;
+
+create or replace function public.claim_learner_account_link_code(
+  p_code text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = pg_catalog, public, auth, extensions
+as $$
+declare
+  actor_id uuid := auth.uid();
+  code_hash_value text;
+  link_row public.learner_account_link_codes%rowtype;
+  owner_id uuid;
+begin
+  if actor_id is null then raise exception 'Authentication required'; end if;
+  if p_code is null or length(p_code) <> 48 then raise exception 'Invalid learner link code'; end if;
+
+  code_hash_value := encode(extensions.digest(lower(p_code), 'sha256'), 'hex');
+
+  select * into link_row
+  from public.learner_account_link_codes
+  where code_hash = code_hash_value
+  for update;
+
+  if not found or link_row.used_at is not null or link_row.expires_at <= now() then
+    raise exception 'Learner link code is invalid, expired or already used';
+  end if;
+
+  update public.learner_profiles
+     set owner_user_id = actor_id,
+         updated_at = now()
+   where id = link_row.learner_profile_id
+     and owner_user_id is null
+     and profile_status = 'active';
+
+  if not found then
+    select owner_user_id into owner_id
+    from public.learner_profiles
+    where id = link_row.learner_profile_id;
+
+    if owner_id is distinct from actor_id then
+      raise exception 'Learner profile is already linked to another account';
+    end if;
+  end if;
+
+  update public.learner_account_link_codes
+     set used_at = now(),
+         used_by_user_id = actor_id
+   where id = link_row.id;
+
+  return link_row.learner_profile_id;
+end;
+$$;
+
+revoke all on function public.create_learner_account_link_code(uuid) from public, anon;
+revoke all on function public.claim_learner_account_link_code(text) from public, anon;
+grant execute on function public.create_learner_account_link_code(uuid) to authenticated, myschool_runtime;
+grant execute on function public.claim_learner_account_link_code(text) to authenticated, myschool_runtime;
 
 create or replace function public.get_learner_practice_set(
   p_learner_profile_id uuid,
@@ -304,6 +427,24 @@ begin
         )
       )
       and (
+        q.origin_type <> 'ai_generated'
+        or exists (
+          select 1
+          from public.question_sources qs
+          join public.curriculum_chunks cc on cc.id = qs.chunk_id
+          join public.curriculum_sources cs on cs.id = cc.source_id
+          where qs.question_id = q.id
+            and cs.status = 'active'
+            and cs.rights_status = 'approved'
+            and 'question_generation' = any(cs.permitted_uses)
+            and (
+              (q.sharing_scope = 'platform' and cs.sharing_scope = 'platform')
+              or (q.sharing_scope = 'tenant' and cs.tenant_id = q.tenant_id and cs.sharing_scope in ('platform', 'tenant'))
+              or (q.sharing_scope = 'school' and cs.tenant_id = q.tenant_id and cs.school_id = q.school_id and cs.sharing_scope in ('platform', 'tenant', 'school'))
+            )
+        )
+      )
+      and (
         p_avoid_recent_days = 0
         or e.id is null
         or e.last_event_at < now() - make_interval(days => p_avoid_recent_days)
@@ -361,6 +502,11 @@ begin
   order by q.subject_code, q.grade_code, q.unit_title nulls first, q.id;
 end;
 $$;
+
+revoke all on function public.get_learner_practice_set(uuid, text, text, text, integer, smallint, integer)
+  from public, anon;
+revoke all on function public.submit_learner_question_attempt(uuid, uuid, jsonb, text)
+  from public, anon;
 
 create or replace function public.submit_learner_question_attempt(
   p_learner_profile_id uuid,
@@ -433,6 +579,29 @@ begin
   for update;
   if not found then raise exception 'Question exposure does not belong to this learner'; end if;
 
+  -- Recheck after locking the exposure so concurrent requests with the same
+  -- idempotency key cannot create two attempts for a single exposure.
+  select * into existing_attempt
+  from public.learner_question_attempts
+  where idempotency_key = p_idempotency_key;
+
+  if found then
+    if existing_attempt.learner_profile_id <> p_learner_profile_id
+       or existing_attempt.exposure_id <> p_exposure_id
+       or existing_attempt.answer_payload <> p_response_payload then
+      raise exception 'Idempotency key was reused with a different attempt payload';
+    end if;
+    return query select
+      existing_attempt.id,
+      existing_attempt.attempt_number,
+      existing_attempt.grading_status,
+      existing_attempt.is_correct,
+      existing_attempt.score,
+      existing_attempt.max_score,
+      existing_attempt.feedback;
+    return;
+  end if;
+
   select * into question_row
   from public.question_bank q
   where q.id = exposure_row.question_id
@@ -446,6 +615,8 @@ begin
   if not found then raise exception 'Protected answer key is not available; the question cannot be graded'; end if;
 
   expected_value := coalesce(
+    answer_row.answer_payload ->> 'correct_option_id',
+    answer_row.answer_payload ->> 'correct_choice',
     answer_row.answer_payload ->> 'correct_choice_id',
     answer_row.answer_payload ->> 'correct_option',
     answer_row.answer_payload ->> 'correct_answer',
