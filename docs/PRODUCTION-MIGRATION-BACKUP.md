@@ -66,3 +66,8 @@ If a complete managed backup/restore point is required rather than this limited 
 - Database backups and CLI guidance: https://supabase.com/docs/guides/platform/backups
 - Supabase CLI v3 `db dump`: https://supabase.com/docs/reference/cli/supabase-db-remote
 - Backup/restore CLI examples: https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore
+
+
+## Current execution state
+
+No production migration has been applied and no Edge Function has been replaced. The branch passed GitHub Actions run #74, including the invalid-provider-key integration check. The operator must perform the PowerShell dump and verify the three files before any production schema change.
