@@ -102,3 +102,11 @@ Do not interpret these branch changes as deployed production capability. The new
 - GitHub Actions run #64 passed: https://github.com/lopicotion-coder/olic/actions/runs/44424098077 (Deno type-check and Worker/parser/budget/auth tests).
 
 - Production rollout remains blocked pending a verified CLI logical dump; the organization is on the Free plan with no customer-accessible daily backup/restore-point workflow. The My School backup_jobs table is not a database dump engine.
+
+
+## Execution update — 2026-11-19
+- GitHub Actions run #74 passed on the latest PR head: https://github.com/lopicotion-coder/olic/actions/runs/44455937815. It runs Deno type-check, unit tests, and the real invalid-key OpenAI HTTP 401 integration test.
+- Static-reviewed branch migrations against live object inventory; all direct dependencies for the new tables and core AI structures were found in the current database. SQL has not been applied to production.
+- Corrected the tenant background-operation request cap to count active reservations before they settle.
+- Added a private manual logical backup procedure for the Free plan. The procedure excludes Supabase-managed Auth/Storage schemas and is not a full project recovery image.
+- No production migrations, Edge Function replacements, secrets, provider routes, AI budgets, or cron jobs were written during this pass.
