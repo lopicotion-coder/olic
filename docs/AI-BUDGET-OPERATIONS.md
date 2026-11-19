@@ -104,3 +104,10 @@ Background settlement fallback: if a provider responds but normal event finaliza
 ## Production backup gate
 
 Production migration execution is paused until the Free-plan logical backup procedure in `docs/PRODUCTION-MIGRATION-BACKUP.md` is completed. The app's `backup_jobs` / `restore_jobs` tables are workflow metadata only, not a database dump/restore system. The CLI logical dump excludes Supabase-managed Auth/Storage schemas, so it is not described as a full project recovery image.
+
+
+## Latest implementation validation
+
+GitHub Actions run #74 passed, including the real invalid-key OpenAI integration test. The test only verifies provider HTTP 401/error sanitization; it does not exercise production secrets, database settlement, or a paid completion path.
+
+The tenant background-operation monthly request-cap check now includes unexpired active background reservations, not only completed background events. This prevents concurrent unsettled jobs from bypassing request count limits.
