@@ -100,3 +100,5 @@ Do not interpret these branch changes as deployed production capability. The new
 - Release caveat: a hard Worker process termination after provider success but before settlement remains a distributed failure window; no exactly-once guarantee is claimed, and staging must verify reservation expiry/reconciliation before enabling paid AI.
 
 - GitHub Actions run #64 passed: https://github.com/lopicotion-coder/olic/actions/runs/44424098077 (Deno type-check and Worker/parser/budget/auth tests).
+
+- Production rollout remains blocked pending a verified CLI logical dump; the organization is on the Free plan with no customer-accessible daily backup/restore-point workflow. The My School backup_jobs table is not a database dump engine.
