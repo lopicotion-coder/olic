@@ -28,19 +28,36 @@ New-Item -ItemType Directory -Force $backupDir | Out-Null
 
 # Read the existing Database password from the Supabase Dashboard.
 # Do not reset it as part of this procedure.
-$env:SUPABASE_DB_PASSWORD = Read-Host "Existing Supabase Database password"
+$securePassword = Read-Host -AsSecureString "Existing Supabase Database password"
+$passwordPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
 
-# CLI v3 is local by default. --remote explicitly selects the production project.
-supabase db dump --remote=yigixquioguqnpbfhepi --password $env:SUPABASE_DB_PASSWORD --file (Join-Path $backupDir "roles.sql") --role-only
-supabase db dump --remote=yigixquioguqnpbfhepi --password $env:SUPABASE_DB_PASSWORD --file (Join-Path $backupDir "schema.sql")
-supabase db dump --remote=yigixquioguqnpbfhepi --password $env:SUPABASE_DB_PASSWORD --file (Join-Path $backupDir "data.sql") --use-copy --data-only -x "storage.buckets_vectors" -x "storage.vector_indexes"
+try {
+  $env:SUPABASE_DB_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordPointer)
 
-Remove-Item Env:SUPABASE_DB_PASSWORD
+  # CLI v3 is local by default. --remote explicitly selects the production project.
+  supabase db dump --remote=yigixquioguqnpbfhepi --password $env:SUPABASE_DB_PASSWORD --file (Join-Path $backupDir "roles.sql") --role-only
+  if ($LASTEXITCODE -ne 0) { throw "Role dump failed" }
+
+  supabase db dump --remote=yigixquioguqnpbfhepi --password $env:SUPABASE_DB_PASSWORD --file (Join-Path $backupDir "schema.sql")
+  if ($LASTEXITCODE -ne 0) { throw "Schema dump failed" }
+
+  supabase db dump --remote=yigixquioguqnpbfhepi --password $env:SUPABASE_DB_PASSWORD --file (Join-Path $backupDir "data.sql") --use-copy --data-only -x "storage.buckets_vectors" -x "storage.vector_indexes"
+  if ($LASTEXITCODE -ne 0) { throw "Data dump failed" }
+}
+finally {
+  Remove-Item Env:SUPABASE_DB_PASSWORD -ErrorAction SilentlyContinue
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordPointer)
+}
 
 Get-ChildItem $backupDir | Select-Object Name, Length
-Get-FileHash (Join-Path $backupDir "roles.sql") -Algorithm SHA256
-Get-FileHash (Join-Path $backupDir "schema.sql") -Algorithm SHA256
-Get-FileHash (Join-Path $backupDir "data.sql") -Algorithm SHA256
+$dumpFiles = @("roles.sql", "schema.sql", "data.sql")
+foreach ($name in $dumpFiles) {
+  $file = Join-Path $backupDir $name
+  if (-not (Test-Path $file) -or (Get-Item $file).Length -eq 0) {
+    throw "Backup file is missing or empty: $name"
+  }
+  Get-FileHash $file -Algorithm SHA256
+}
 ```
 
 ## Coverage limits
