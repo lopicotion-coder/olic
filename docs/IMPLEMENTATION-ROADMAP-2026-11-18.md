@@ -214,3 +214,5 @@ Every phase must include:
 - Release caveat: caught post-provider failures are settled or made terminal without automatic re-call. A hard Worker process termination in the provider-success/settlement window remains a distributed failure boundary; staging must verify reservation TTL and manual billing reconciliation before release.
 
 - GitHub Actions run #64 passed: https://github.com/lopicotion-coder/olic/actions/runs/44424098077 (Deno type-check and Worker/parser/budget/auth tests).
+
+- Production rollout remains blocked pending a verified CLI logical dump; the organization is on the Free plan with no customer-accessible daily backup/restore-point workflow. The My School backup_jobs table is not a database dump engine.
