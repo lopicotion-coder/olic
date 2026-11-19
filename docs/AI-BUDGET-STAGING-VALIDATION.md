@@ -60,7 +60,7 @@ Expected: RLS enabled; `anon_can_reserve=false`; `authenticated_can_reserve=fals
 - [ ] Simulate a DB failure after a fully settled paid background call but before downstream persistence (question parsing/result insert, chunk embedding update, or RAG retrieval): the parent request/job becomes terminal and does not issue the same provider call again automatically.
 - [ ] Simulate both settlement RPCs unavailable after provider success: reservation remains until TTL, no automatic second provider call occurs in the live process, the parent job becomes terminal, and the critical log contains the operation/request ID.
 - [ ] Force-terminate the Worker after a provider returns but before any settlement RPC commits. Confirm the reservation remains until TTL and the queue/job is reconciled with provider billing before any manual requeue; this cross-system hard-crash window is not exactly-once guaranteed.
-- [ ] Run concurrent reservations near the monthly budget/request cap; row locks must prevent aggregate reservations from exceeding available budget.
+- [ ] Run concurrent reservations near the monthly budget/request cap; row locks must prevent aggregate reservations from exceeding available budget and the request-cap calculation must include active background reservations before settlement.
 - [ ] Duplicate queue deliveries and simultaneous Worker invocations claim a job once; retryable pre-provider failures do not leave reservations behind.
 - [ ] Internal Worker token missing/incorrect is denied even with a valid JWT; valid server-side JWT plus the correct token is accepted.
 - [ ] Cron triggers `POST /functions/v1/ai-worker/run`; inspect `net._http_response` for 2xx and Worker result counts.
