@@ -3,6 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { extractCurriculumDocument, chunkCurriculumPages } from "./document-parser.ts";
 import { hasValidWorkerToken } from "./worker-auth.ts";
 import { isUnsettledPaidProviderError } from "./background-budget-errors.ts";
+import { assertProviderSuccess } from "./provider-http.ts";
 import { estimateInputTokens, estimateOutputTokens, estimateUsdCost } from "./budget-math.ts";
 
 type ProviderName = "openrouter" | "openai" | "gemini" | "xai";
@@ -278,7 +279,7 @@ async function generateEmbeddings(texts: string[]): Promise<EmbeddingBatch> {
     }),
   }, 90_000);
 
-  if (!response.ok) throw new Error(`Embedding provider returned HTTP ${response.status}`);
+  assertProviderSuccess("openai embeddings", response);
   const body = response.body as {
     data?: Array<{ index: number; embedding: number[] }>;
     error?: { message?: string };
@@ -670,7 +671,7 @@ async function callProvider(provider: ProviderName, model: string, messages: Gat
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) throw new Error(`Gemini request failed (${res.status})`);
+    assertProviderSuccess("gemini", res);
     const raw = res.body as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>; usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } };
     const content = raw.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
     return {
@@ -710,7 +711,7 @@ async function callProvider(provider: ProviderName, model: string, messages: Gat
       stream: false,
     }),
   });
-  if (!res.ok) throw new Error(`${provider} request failed (${res.status})`);
+  assertProviderSuccess(provider, res);
   const raw = res.body as { choices?: Array<{ message?: { content?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
   return {
     provider,
