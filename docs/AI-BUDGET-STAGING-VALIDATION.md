@@ -2,6 +2,10 @@
 
 This checklist is mandatory before merging PR #13 or deploying its migrations and Worker. It must run on an isolated Supabase Development Branch or staging project, never on production.
 
+## Production protection gate
+
+Before any production migration or Edge Function replacement, complete and review `docs/PRODUCTION-MIGRATION-BACKUP.md`. An isolated staging branch is preferred; production is never the test environment.
+
 ## Environment gate
 
 - [ ] Create an isolated Supabase branch from the current production schema. Production data must not be copied into the test environment.
