@@ -216,3 +216,10 @@ Every phase must include:
 - GitHub Actions run #64 passed: https://github.com/lopicotion-coder/olic/actions/runs/44424098077 (Deno type-check and Worker/parser/budget/auth tests).
 
 - Production rollout remains blocked pending a verified CLI logical dump; the organization is on the Free plan with no customer-accessible daily backup/restore-point workflow. The My School backup_jobs table is not a database dump engine.
+
+
+## Execution update — 2026-11-19
+- GitHub Actions run #74 passed on the latest PR head: https://github.com/lopicotion-coder/olic/actions/runs/44455937815. It runs Deno type-check, unit tests, and the real invalid-key OpenAI HTTP 401 integration test.
+- Corrected tenant background AI monthly request-cap enforcement to count active background reservations as well as settled events.
+- Added a provider-error integration check using a deliberately invalid CI-only OpenAI credential; no production secrets were used and the call is expected to return 401.
+- Added a Free-plan manual logical backup runbook. Production migrations and Edge Function deployments remain blocked pending a private dump and acceptance of its Auth/Storage coverage limits.
