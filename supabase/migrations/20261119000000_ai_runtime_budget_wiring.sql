@@ -776,6 +776,9 @@ begin
       +
       (select count(*) from public.ai_background_budget_events e
         where e.budget_id = budget_row.id and e.created_at >= month_start)
+      +
+      (select count(*) from public.ai_background_budget_reservations r
+        where r.budget_id = budget_row.id and r.expires_at > now())
       into request_count;
     if request_count >= budget_row.monthly_request_limit then
       raise exception 'The monthly tenant AI request limit has been reached';
