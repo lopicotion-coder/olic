@@ -99,3 +99,8 @@ Therefore the code is prepared but deliberately fails closed. Do not enable real
 
 
 Background settlement fallback: if a provider responds but normal event finalization fails, the Worker calls `worker_fail_background_ai_operation` to record the actual provider cost as a `completed` provider operation with `settlement_fallback=true` plus over-budget/token-limit metadata, release the reservation, and return the already-generated output to its caller. It does not call the provider again. If both settlement attempts fail, a terminal error prevents automatic job retry; the reservation remains until expiry and a critical log requires manual reconciliation. By contrast, interactive tenant/learner requests whose response persistence fails are recorded as `failed` usage events and marked terminally failed. A hard Worker process termination after the provider has returned but before any settlement RPC commits is not transactionally preventable across an external provider and Postgres. The reservation remains until its 15-minute TTL; an operator must reconcile provider billing and the request/job before manual requeue. The code handles caught provider/persistence/settlement exceptions, but this hard-crash window remains a staging/release risk until a durable provider-start/idempotency design is validated.
+
+
+## Production backup gate
+
+Production migration execution is paused until the Free-plan logical backup procedure in `docs/PRODUCTION-MIGRATION-BACKUP.md` is completed. The app's `backup_jobs` / `restore_jobs` tables are workflow metadata only, not a database dump/restore system. The CLI logical dump excludes Supabase-managed Auth/Storage schemas, so it is not described as a full project recovery image.
