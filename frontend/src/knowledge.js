@@ -46,7 +46,57 @@ function sourceVersions(source, versions) {
   return versions.filter((item) => item.source_id === source.id);
 }
 
+function metricCard(title, value, note = "") {
+  return `<article class="metric-card"><span>${esc(title)}</span><strong>${esc(value)}</strong><small>${esc(note)}</small></article>`;
+}
+
+function renderGrowthPanel(data) {
+  const sources = data.sources ?? [];
+  const versions = data.versions ?? [];
+  const concepts = data.concepts ?? [];
+  const questions = data.questions ?? [];
+  const mappings = data.mappings ?? [];
+  const approvedSources = sources.filter((source) => source.status === "active" && source.rights_status === "approved");
+  const readyVersions = versions.filter((version) => version.ingestion_status === "ready");
+  const readinessScore = Math.min(100,
+    (sources.length ? 15 : 0)
+    + (approvedSources.length ? 20 : 0)
+    + (readyVersions.length ? 20 : 0)
+    + (concepts.length ? 15 : 0)
+    + (questions.length ? 15 : 0)
+    + (mappings.length ? 15 : 0),
+  );
+  const checklist = [
+    ["تسجيل المدرسة ذاتيًا", "النمو يبدأ من طلب بسيط ثم تأهيل آلي، وليس من مكالمة تعريفية طويلة."],
+    ["AI Sales Agent منفصل", "نفس المزود ممكن، لكن الـRAG والأسلوب والصلاحيات لازم يكونوا مختلفين عن المساعد التعليمي."],
+    ["إغلاق الصفقة عندك", "الـAI يجمع الاحتياج ويصفّي الـLeads، وأنت تقفل فقط الحالات الجادة."],
+    ["Zero-budget mode", "لا نربط النمو باشتراكات مدفوعة قبل أول إيراد حقيقي."],
+    ["Pilot ثم توسّع", "ابدأ ببضع مدارس/معلمين مختارين، ثم وسّع فقط بعد تحقق واضح."],
+  ];
+  const checklistRows = checklist.map(([title, note]) => `<div class="list-row"><strong>${esc(title)}</strong><small>${esc(note)}</small></div>`).join("");
+  return `
+    <section class="panel growth-ops-panel">
+      <div class="section-head">
+        <div>
+          <h3>النمو والتفعيل</h3>
+          <p>لوحة مختصرة تجمع جاهزية المحتوى، وخطة التسجيل الذاتي، ونقاط التشغيل التي تحتاج تفعيل قبل التوسع.</p>
+        </div>
+        <span class="status-badge status-active">جاهز للتوسع التدريجي</span>
+      </div>
+      <div class="metrics-grid">
+        ${metricCard("مصادر المعرفة", String(sources.length), "الكتب ونماذج الإجابة المسجلة")}
+        ${metricCard("الإصدارات الجاهزة", String(readyVersions.length), "ما وصل لحالة المعالجة الجاهزة")}
+        ${metricCard("مفاهيم المنهج", String(concepts.length), "خريطة المفاهيم المتاحة الآن")}
+        ${metricCard("الأسئلة المربوطة", String(mappings.length), "روابط الأسئلة بالمفاهيم")}
+        ${metricCard("قابلية الإطلاق", `${readinessScore}%`, "مؤشر تشغيل داخلي وليس مقياسًا تجاريًا نهائيًا")}
+      </div>
+      <div class="info-banner">هذا القسم لا يعتمد على إنفاق مدفوع. هو مصمم ليرشدك لما يجب أن يكون جاهزًا قبل استقبال أول مدارس أو معلمين أو طلاب مدفوعين.</div>
+      <div class="growth-checklist">${checklistRows}</div>
+    </section>`;
+}
+
 export function renderKnowledgeConsole(data) {
+  const growthPanel = renderGrowthPanel(data);
   const sourceCards = (data.sources ?? []).map((source) => {
     const versions = sourceVersions(source, data.versions ?? []);
     const kind = source.source_kind === "model_answer_document" ? "نموذج إجابة" : "محتوى منهج";
@@ -138,6 +188,7 @@ export function renderKnowledgeConsole(data) {
     </form>`;
 
   return head("محرك المعرفة","إدارة مركزية للمصادر التعليمية ونماذج الإجابة والمفاهيم. الإضافة والاعتماد من خلال المنصة فقط.")
+    + growthPanel
     + panel("إضافة كتاب أو نموذج إجابة",addSource)
     + head("المصادر المسجلة", "كل مصدر يظهر بحالته الحقيقية وإصداراته.")
     + (sourceCards || empty("لا توجد مصادر معرفة مسجلة بعد.","لم تتم إضافة كتب أو نماذج إجابة إلى النظام حتى الآن."))
@@ -224,7 +275,7 @@ export function renderLearningDashboard(data) {
     + nextActionCard
     + results
     + practiceStatus
-    + panel("المهارات ونقاط التطوير",table(["الطالب","المفهوم","الإتقان","الثقة في القياس","عدد الأدلة","الحالة"],masteryRows,"لا توجد أدلة تقييم معتمدة بعد.","يبدأ النظام في قياس المفاهيم بعد حل أسئلة فعلية مرتبطة بخريطة المفاهيم."))
+    + panel("المهارات ونقاط التطوير",table(["الطالب","المفهوم","الإتقان","الثقة في القياس","عدد الأدلة","الحالة"],masteryRows,"لا توجد أدلة تقييم معتمدة بعد."))
     + ((data.students?.length && data.canPractice) ? panel("اختيار مادة أخرى",startPractice) : "")
     + (practice || "");
 }
