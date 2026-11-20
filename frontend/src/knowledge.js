@@ -1,3 +1,5 @@
+import { getNextLearningAction } from "./engagement.js";
+
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -183,9 +185,34 @@ export function renderLearningDashboard(data) {
       <div class="form-actions"><button class="button button-primary" type="submit">ابدأ تدريبًا مخصصًا</button></div>
     </form>` : empty("لا توجد مجموعة أسئلة تدريبية متاحة بعد.","يظهر التدريب عندما توجد أسئلة معتمدة ومربوطة بمفاهيم المنهج الخاصة بالطالب. لا ينشئ النظام نقاط ضعف أو أسئلة افتراضية.");
 
-  return head("تقدّم الطالب","يُستنتج مستوى الإتقان من إجابات الطالب الفعلية، وليس بتقدير يدوي أو بيانات تجريبية.")
+  const nextAction = data.canPractice
+    ? getNextLearningAction({ tracks:data.tracks??[], mastery:data.mastery??[], conceptsById:data.conceptsById??{} })
+    : null;
+  const nextActionCard = nextAction ? `
+    <section class="panel learning-next-action">
+      <div class="learning-next-copy">
+        <span class="eyebrow">خطوتك التالية</span>
+        <h3>${nextAction.kind==="reinforce" ? `راجع مفهوم: ${esc(nextAction.conceptTitle)}` : "ابدأ بتقييم مستواك"}</h3>
+        <p>${esc(nextAction.reason)}</p>
+        ${nextAction.kind==="reinforce"
+          ? `<div class="learning-evidence"><span>${esc(nextAction.subjectCode)} · ${esc(nextAction.gradeCode)}</span><strong>الإتقان المسجل: ${nextAction.masteryPercent}%</strong><small>بناءً على ${nextAction.evidenceCount} أدلة تقييم</small></div>`
+          : `<div class="learning-evidence"><span>${esc(nextAction.subjectCode)} · ${esc(nextAction.gradeCode)}</span><small>لن نفترض وجود نقطة ضعف قبل جمع أدلة كافية.</small></div>`}
+      </div>
+      <form data-form="start-adaptive-practice" class="learning-next-action-cta">
+        <input type="hidden" name="track" value="${esc(nextAction.trackValue)}"/>
+        <button class="button button-primary" type="submit">ابدأ جلسة تدريب قصيرة</button>
+        <small>حتى 8 أسئلة معتمدة حسب المتاح</small>
+      </form>
+    </section>`
+    : (data.canPractice ? empty("لا يوجد تدريب متاح حاليًا.","ستظهر خطوة مقترحة عندما يتوفر مسار دراسي وأسئلة معتمدة.") : "");
+  const practiceStatus = data.canPractice && practice
+    ? `<section class="panel practice-session-status"><div><h3>جلسة التدريب الحالية</h3><p>${practice.length ? `متبقي ${practice.length} سؤال في هذه الجلسة.` : "انتهت الجلسة الحالية. يمكنك مراجعة ما تعلمته أو إنهاء وقت الدراسة الآن."}</p></div>${practice.length ? `<span class="status-badge status-active">جلسة نشطة</span>` : `<span class="status-badge status-completed">مكتملة</span>`}</section>`
+    : "";
+  return head("تقدّم الطالب","خطوات تعلم مبنية على إجاباتك الفعلية، مع توضيح ما نعرفه وما زلنا نحتاج إلى قياسه.")
+    + nextActionCard
     + results
+    + practiceStatus
     + panel("المهارات ونقاط التطوير",table(["الطالب","المفهوم","الإتقان","الثقة في القياس","عدد الأدلة","الحالة"],masteryRows,"لا توجد أدلة تقييم معتمدة بعد.","يبدأ النظام في قياس المفاهيم بعد حل أسئلة فعلية مرتبطة بخريطة المفاهيم."))
-    + ((data.students?.length && data.canPractice) ? panel("تدريب تكيفي",startPractice) : "")
+    + ((data.students?.length && data.canPractice) ? panel("اختيار مادة أخرى",startPractice) : "")
     + (practice || "");
 }
