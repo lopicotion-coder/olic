@@ -1,4 +1,5 @@
 import { hasValidGatewayToken } from "./gateway-auth.ts";
+import { functionRoutePath } from "./function-route-path.ts";
 
 type ProviderName = "openrouter" | "openai" | "gemini" | "xai";
 
@@ -42,13 +43,6 @@ function allowedModels(provider: ProviderName): Set<string> {
 function allowedEmbeddingModels(): Set<string> {
   const configured = Deno.env.get("AI_GATEWAY_ALLOWED_EMBEDDING_MODELS_OPENAI") ?? "text-embedding-3-small";
   return new Set(configured.split(",").map((value) => value.trim()).filter(Boolean));
-}
-
-function gatewayPath(pathname: string): string {
-  const marker = "/functions/v1/ai-gateway";
-  const markerIndex = pathname.indexOf(marker);
-  const relative = markerIndex >= 0 ? pathname.slice(markerIndex + marker.length) : pathname;
-  return relative || "/";
 }
 
 function json(data: unknown, init?: ResponseInit): Response {
@@ -314,7 +308,7 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204 });
 
   const url = new URL(req.url);
-  const path = gatewayPath(url.pathname);
+  const path = functionRoutePath(url.pathname, "ai-gateway");
   if (req.method === "GET") {
     if (path === "/health" || path === "/") {
       return json({ ok: true, service: "ai-gateway" });
