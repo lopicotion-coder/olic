@@ -537,12 +537,13 @@ async function loadSectionData() {
       return { rows: teacherRows, classes: classRows };
     }
     case "classes": {
-      const [classRows, grades, years] = await Promise.all([
+      const [classRows, grades, years, subjects] = await Promise.all([
         fetchScoped(supabase, "classes", "id,tenant_id,school_id,name,capacity,status,grade_level_id,academic_year_id,campus_id", ctx, { order: "name", limit: 250 }),
         lookupRows("grade_levels", "id,name,code,status"),
         lookupRows("academic_years", "id,name,status,is_current,starts_on,ends_on"),
+        lookupRows("subjects", "id,name,code,status,school_id"),
       ]);
-      return { rows: classRows, grades, years };
+      return { rows: classRows, grades, years, subjects };
     }
     case "attendance": {
       const [sessions, classRows] = await Promise.all([
@@ -1063,17 +1064,63 @@ function renderClasses(data) {
   const gradeMap = new Map(data.grades.map((item) => [item.id,item.name]));
   const yearMap = new Map(data.years.map((item) => [item.id,item.name]));
   const rowsHtml = data.rows.map((row) => `<tr><td><strong>${esc(row.name)}</strong></td><td>${esc(gradeMap.get(row.grade_level_id) || "—")}</td><td>${esc(yearMap.get(row.academic_year_id) || "—")}</td><td>${row.capacity ?? "—"}</td><td>${badge(row.status)}</td></tr>`);
-  const canManage = has("classes.manage") && state.context.tenantId;
+  const canManage = has("classes.manage") && Boolean(state.context.tenantId);
+  const canSetup = has("academics.manage") && Boolean(state.context.tenantId);
+  const schoolField = state.context.schoolId
+    ? `<input type="hidden" name="school_id" value="${esc(state.context.schoolId)}"/>`
+    : `<label class="field"><span>المدرسة</span><select name="school_id" required><option value="">اختر مدرسة</option>${schoolOptions()}</select></label>`;
+  const academicYearForm = canSetup ? `
+    <section id="academic-year-form" class="panel form-panel hidden">
+      <div class="panel-heading"><div><h3>إضافة سنة دراسية</h3><p>تُستخدم السنة الدراسية عند إنشاء الفصول وتسجيل الطلاب.</p></div></div>
+      <form class="form-grid compact-form" data-form="create-academic-year">
+        ${schoolField}
+        <label class="field"><span>اسم السنة</span><input name="name" required maxlength="100" placeholder="2026 / 2027"/></label>
+        <label class="field"><span>بداية الدراسة</span><input name="starts_on" type="date" required/></label>
+        <label class="field"><span>نهاية الدراسة</span><input name="ends_on" type="date" required/></label>
+        <label class="field"><span>الحالة</span><select name="status"><option value="planned">مخططة</option><option value="active">نشطة</option></select></label>
+        <label class="check-field"><input type="checkbox" name="is_current"/><span>السنة الحالية (واحدة فقط لكل مدرسة)</span></label>
+        <div class="form-actions"><button class="button button-primary" type="submit">حفظ السنة الدراسية</button></div>
+      </form>
+    </section>
+    <section id="grade-level-form" class="panel form-panel hidden">
+      <div class="panel-heading"><div><h3>إضافة صف دراسي</h3><p>الصفوف مرتبطة بالمدرسة وليست قائمة عامة مشتركة.</p></div></div>
+      <form class="form-grid compact-form" data-form="create-grade-level">
+        ${schoolField}
+        <label class="field"><span>اسم الصف</span><input name="name" required maxlength="100" placeholder="الصف الأول الثانوي"/></label>
+        <label class="field"><span>كود الصف (اختياري)</span><input name="code" maxlength="40" dir="ltr"/></label>
+        <label class="field"><span>ترتيب العرض</span><input name="sort_order" type="number" min="0" max="1000" value="0"/></label>
+        <div class="form-actions"><button class="button button-primary" type="submit">حفظ الصف</button></div>
+      </form>
+    </section>
+    <section id="subject-form" class="panel form-panel hidden">
+      <div class="panel-heading"><div><h3>إضافة مادة دراسية</h3><p>تُستخدم المواد في الواجبات والتقييمات والمحتوى.</p></div></div>
+      <form class="form-grid compact-form" data-form="create-subject">
+        ${schoolField}
+        <label class="field"><span>اسم المادة</span><input name="name" required maxlength="120" placeholder="الرياضيات"/></label>
+        <label class="field"><span>كود المادة (اختياري)</span><input name="code" maxlength="40" dir="ltr"/></label>
+        <label class="field field-wide"><span>وصف مختصر (اختياري)</span><textarea name="description" rows="2" maxlength="1000"></textarea></label>
+        <div class="form-actions"><button class="button button-primary" type="submit">حفظ المادة</button></div>
+      </form>
+    </section>` : "";
+  const setupActions = canSetup ? `
+    <button class="button button-secondary" data-action="toggle-form" data-target="academic-year-form">سنة دراسية</button>
+    <button class="button button-secondary" data-action="toggle-form" data-target="grade-level-form">صف جديد</button>
+    <button class="button button-secondary" data-action="toggle-form" data-target="subject-form">مادة جديدة</button>` : "";
   const form = canManage ? `
     <form class="form-grid compact-form" data-form="create-class">
       ${state.context.schoolId ? "" : `<label class="field"><span>المدرسة</span><select name="school_id" required><option value="">اختر مدرسة مسجلة</option>${schoolOptions()}</select></label>`}
       <label class="field"><span>اسم الفصل</span><input name="name" required maxlength="80"/></label>
       <label class="field"><span>الصف الدراسي</span><select name="grade_level_id" required><option value="">اختر صفًا مسجلًا</option>${data.grades.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("")}</select></label>
-      <label class="field"><span>السنة الدراسية</span><select name="academic_year_id" required><option value="">اختر سنة مسجلة</option>${data.years.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("")}</select></label>
+      <label class="field"><span>السنة الدراسية</span><select name="academic_year_id" required><option value="">اختر سنة مسجلة</option>${data.years.map((item) => `<option value="${esc(item.id)}">${esc(item.name)} ${item.is_current?"(الحالية)":""}</option>`).join("")}</select></label>
       <label class="field"><span>السعة</span><input name="capacity" type="number" min="1" max="1000"/></label>
       <div class="form-actions"><button class="button button-primary" type="submit" ${!data.grades.length || !data.years.length ? "disabled" : ""}>إنشاء فصل</button></div>
     </form>` : "";
-  return sectionHead("الفصول", "الفصول والسنة الدراسية والصفوف المسجلة.", canManage ? `<button class="button button-secondary" data-action="toggle-form" data-target="class-form">إنشاء فصل</button>` : "")
+  const setupNotice = canManage && (!data.grades.length || !data.years.length || !data.subjects.length)
+    ? `<div class="info-banner">قبل بدء الفصول والواجبات، أنشئ الصفوف والسنوات الدراسية والمواد اللازمة لهذه المدرسة. لا توجد بيانات ابتدائية في Production حاليًا.</div>`
+    : "";
+  return sectionHead("الفصول والإعداد الأكاديمي", "إدارة السنوات الدراسية والصفوف والمواد والفصول.", `${setupActions}${canManage ? `<button class="button button-secondary" data-action="toggle-form" data-target="class-form">إنشاء فصل</button>` : ""}`)
+    + setupNotice
+    + academicYearForm
     + (canManage ? `<section id="class-form" class="panel form-panel hidden">${data.grades.length && data.years.length ? form : emptyState("لا توجد صفوف أو سنوات دراسية مسجلة تسمح بإنشاء فصل.")}</section>` : "")
     + table(["الفصل","الصف الدراسي","السنة الدراسية","السعة","الحالة"], rowsHtml, "لا توجد فصول مسجلة في هذا النطاق.");
 }
