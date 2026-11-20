@@ -4,8 +4,8 @@ import { extractCurriculumDocument, chunkCurriculumPages } from "./document-pars
 import { fetchCurriculumPdf } from "./source-url.ts";
 import { hasValidWorkerToken } from "./worker-auth.ts";
 import { isUnsettledPaidProviderError } from "./background-budget-errors.ts";
-import { assertProviderSuccess } from "./provider-http.ts";
-import { callAiGateway } from "../_shared/ai-gateway-client.ts";
+
+import { callAiGateway, callAiGatewayEmbeddings } from "../_shared/ai-gateway-client.ts";
 import { estimateInputTokens, estimateOutputTokens, estimateUsdCost } from "./budget-math.ts";
 
 type ProviderName = "openrouter" | "openai" | "gemini" | "xai";
@@ -265,43 +265,17 @@ function retryDelayMinutes(attempts: number): number {
 type EmbeddingBatch = { vectors: number[][]; promptTokens: number };
 
 async function generateEmbeddings(texts: string[]): Promise<EmbeddingBatch> {
-  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is required for 1536-dimensional curriculum embeddings");
   if (texts.length < 1 || texts.length > 64) throw new Error("Embedding batch must contain 1 to 64 texts");
-
-  const response = await callJson("https://api.openai.com/v1/embeddings", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: "text-embedding-3-small",
-      dimensions: 1536,
-      input: texts,
-    }),
-  }, 90_000);
-
-  assertProviderSuccess("openai embeddings", response);
-  const body = response.body as {
-    data?: Array<{ index: number; embedding: number[] }>;
-    error?: { message?: string };
-    usage?: { prompt_tokens?: number; total_tokens?: number };
-  };
-  if (!Array.isArray(body.data) || body.data.length !== texts.length) {
-    throw new Error(body.error?.message ?? "Embedding provider returned an incomplete batch");
-  }
-
-  const vectors = body.data
-    .sort((a, b) => a.index - b.index)
-    .map((item) => {
-      if (!Array.isArray(item.embedding) || item.embedding.length !== 1536) {
-        throw new Error("Embedding provider returned a vector with an unexpected dimension");
-      }
-      return item.embedding;
-    });
-  const promptTokens = body.usage?.prompt_tokens ??
-    estimateInputTokens(texts.map((content) => ({ role: "user" as const, content })));
-  return { vectors, promptTokens };
+  const result = await callAiGatewayEmbeddings({
+    supabaseUrl: SUPABASE_URL,
+    endpoint: AI_GATEWAY_URL || undefined,
+    serviceRoleKey: SERVICE_ROLE,
+    internalToken: AI_GATEWAY_INTERNAL_TOKEN,
+    model: "text-embedding-3-small",
+    input: texts,
+    timeoutMs: 90_000,
+  });
+  return { vectors: result.vectors, promptTokens: result.promptTokens };
 }
 
 function vectorLiteral(vector: number[]): string {
@@ -327,7 +301,6 @@ async function sha256HexText(value: string): Promise<string> {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const WORKER_INTERNAL_TOKEN = Deno.env.get("AI_WORKER_INTERNAL_TOKEN") ?? "";
-const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
 const AI_GATEWAY_INTERNAL_TOKEN = Deno.env.get("AI_GATEWAY_INTERNAL_TOKEN") ?? "";
 const AI_GATEWAY_URL = Deno.env.get("AI_GATEWAY_URL") ?? "";
 
@@ -681,9 +654,6 @@ async function retrieveTutorEvidence(
   row: AiRequestRow,
   onProviderCompleted?: () => void,
 ): Promise<{ evidence: CurriculumRetrievalRow[]; embeddingTokens: number }> {
-  if (!OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is required for curriculum-grounded tutor retrieval");
-  }
   if (!Number.isFinite(EMBEDDING_PRICE_PER_MILLION) || EMBEDDING_PRICE_PER_MILLION <= 0) {
     throw new Error("AI_EMBEDDING_PRICE_PER_MILLION must be configured before RAG requests can run");
   }
