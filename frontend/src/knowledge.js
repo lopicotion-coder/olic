@@ -205,8 +205,20 @@ export function renderLearningDashboard(data) {
       </form>
     </section>`
     : (data.canPractice ? empty("لا يوجد تدريب متاح حاليًا.","ستظهر خطوة مقترحة عندما يتوفر مسار دراسي وأسئلة معتمدة.") : "");
-  const practiceStatus = data.canPractice && practice
-    ? `<section class="panel practice-session-status"><div><h3>جلسة التدريب الحالية</h3><p>${practice.length ? `متبقي ${practice.length} سؤال في هذه الجلسة.` : "انتهت الجلسة الحالية. يمكنك مراجعة ما تعلمته أو إنهاء وقت الدراسة الآن."}</p></div>${practice.length ? `<span class="status-badge status-active">جلسة نشطة</span>` : `<span class="status-badge status-completed">مكتملة</span>`}</section>`
+  const session = data.practiceSession;
+  const sessionComplete = Boolean(session && session.total > 0 && session.completed >= session.total);
+  const sessionPercent = session?.total ? Math.round((session.completed / session.total) * 100) : 0;
+  const practiceStatus = data.canPractice && session
+    ? `<section class="panel practice-session-status">
+        <div class="practice-session-copy">
+          <div class="practice-session-title"><h3>${sessionComplete ? "أحسنت، أنهيت الجلسة" : "تقدم جلسة التدريب"}</h3><span class="status-badge ${sessionComplete ? "status-completed" : "status-active"}">${sessionComplete ? "مكتملة" : "جلسة نشطة"}</span></div>
+          <p>${sessionComplete
+            ? `أنجزت ${session.completed} أسئلة في ${esc(session.subjectCode)}. تقدر تراجع إجابتك أو تكتفي بالنهارده.`
+            : `أجبت عن ${session.completed} من ${session.total} أسئلة. متبقي ${session.total-session.completed}.`}</p>
+          <div class="practice-progress-track" role="progressbar" aria-label="تقدم جلسة التدريب" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${sessionPercent}"><span style="width:${sessionPercent}%"></span></div>
+        </div>
+        <strong class="practice-progress-value">${sessionPercent}%</strong>
+      </section>`
     : "";
   return head("تقدّم الطالب","خطوات تعلم مبنية على إجاباتك الفعلية، مع توضيح ما نعرفه وما زلنا نحتاج إلى قياسه.")
     + nextActionCard
