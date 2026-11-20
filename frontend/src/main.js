@@ -16,6 +16,7 @@ import {
   renderSupport,
 } from "./sections.js";
 import { renderKnowledgeConsole, renderLearningDashboard } from "./knowledge.js";
+import { acceptPendingMemberships } from "./membership-acceptance.js";
 
 const root = document.querySelector("#app");
 const STORAGE_CONTEXT_KEY = "my-school:last-context";
@@ -1017,6 +1018,7 @@ async function refreshAccess() {
   state.data = null;
   render();
   try {
+    await acceptPendingMemberships(supabase, state.user.id);
     state.access = await loadAccessModel(supabase, state.user);
     state.locale = state.access.profile?.preferred_locale === "en" ? "en" : "ar";
     state.context = selectContext(state.access.contexts);
