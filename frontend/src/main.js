@@ -105,6 +105,7 @@ const state = {
   recoveryComplete: false,
   practiceSet: [],
   lastPracticeResult: null,
+  practiceSession: null,
 };
 
 function esc(value) {
@@ -660,7 +661,7 @@ async function loadSectionData() {
         }));
         tracks = trackSets.flat();
       }
-      return { students, mastery:namedMastery, conceptsById, tracks, practice:state.practiceSet??[], lastPracticeResult:state.lastPracticeResult, canPractice:ctx.roleKey==="student" };
+      return { students, mastery:namedMastery, conceptsById, tracks, practice:state.practiceSet??[], lastPracticeResult:state.lastPracticeResult, practiceSession:state.practiceSession, canPractice:ctx.roleKey==="student" };
     }
         case "questions":
       return { rows: [], contextNotConfigured: true };
@@ -1271,6 +1272,9 @@ async function perform(action) {
       if(error) throw error;
       state.practiceSet=data??[];
       state.lastPracticeResult=null;
+      state.practiceSession = state.practiceSet.length
+        ? { total:state.practiceSet.length, completed:0, subjectCode, gradeCode }
+        : null;
       break;
     }
     case "submit-adaptive-answer": {
@@ -1289,6 +1293,12 @@ async function perform(action) {
       if(error) throw error;
       state.lastPracticeResult=Array.isArray(data)?data[0]:data;
       state.practiceSet=(state.practiceSet??[]).filter((item)=>item.exposure_id!==exposureId);
+      if (state.practiceSession) {
+        state.practiceSession = {
+          ...state.practiceSession,
+          completed: Math.min(state.practiceSession.total, state.practiceSession.completed + 1),
+        };
+      }
       break;
     }
     case "create-student": {
