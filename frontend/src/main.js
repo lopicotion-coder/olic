@@ -1186,6 +1186,10 @@ async function handleSession(session) {
   state.session = session;
   state.user = session?.user ?? null;
   state.authError = "";
+  if (session?.user?.user_metadata?.myschool_invite === true) {
+    state.inviteMode = true;
+    state.inviteChecking = false;
+  }
   if (!session?.user) {
     state.recoveryMode = false;
     state.recoveryComplete = false;
@@ -2141,7 +2145,10 @@ root.addEventListener("submit", async (event) => {
     }
     const submit = form.querySelector('button[type="submit"]');
     if (submit) submit.disabled = true;
-    const { error } = await supabase.auth.updateUser({ password });
+    const { error } = await supabase.auth.updateUser({
+      password,
+      data: { myschool_invite: false },
+    });
     if (error) {
       state.authError = "تعذّر تعيين كلمة المرور. قد يكون رابط الدعوة منتهي الصلاحية؛ اطلب دعوة جديدة.";
       render();
