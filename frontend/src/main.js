@@ -703,52 +703,134 @@ function renderOverview(data) {
 
 function renderTenants(data) {
   const rowsHtml = data.rows.map((row) => `<tr><td><strong>${esc(row.display_name)}</strong><small>${esc(row.legal_name)}</small></td><td>${esc(row.slug)}</td><td>${badge(row.status)}</td><td>${dateText(row.created_at)}</td></tr>`);
-  const onboardingNotice = has("platform.tenants.manage")
-    ? `<div class="info-banner">إنشاء مؤسسة جديدة متوقف من الواجهة؛ قاعدة الإنتاج لا توفر حتى الآن عملية onboarding ذرّية لإنشاء المؤسسة ودعوة مالكها ومنحه العضوية والدور. لن ننشئ مؤسسة يتيمة بلا مسؤول وصول.</div>`
-    : "";
+  const canCreate = has("platform.tenants.manage");
+  const createForm = canCreate ? `
+    <section class="panel">
+      <div class="panel-heading"><div><h3>إنشاء مؤسسة ودعوة مالكها</h3><p>يتم إنشاء سجل المؤسسة والمالك وعضويته وصلاحيته من خلال الخادم.</p></div></div>
+      <form class="form-grid compact-form" data-form="create-tenant">
+        <label class="field"><span>الاسم القانوني</span><input name="legal_name" required maxlength="180"/></label>
+        <label class="field"><span>الاسم المعروض</span><input name="display_name" required maxlength="180"/></label>
+        <label class="field"><span>الرابط المختصر</span><input name="slug" required maxlength="64" pattern="[a-z0-9-]+" dir="ltr"/></label>
+        <label class="field"><span>بريد مالك المؤسسة</span><input name="owner_email" type="email" required maxlength="254" dir="ltr"/></label>
+        <label class="field"><span>اسم مالك المؤسسة</span><input name="owner_display_name" required maxlength="180"/></label>
+        <div class="form-actions"><button class="button button-primary" type="submit">إنشاء المؤسسة وإرسال الدعوة</button></div>
+      </form>
+    </section>` : "";
   return sectionHead("المؤسسات", "المؤسسات التي تسمح عضويتك وصلاحيات المنصة بالوصول إليها.")
-    + onboardingNotice
+    + createForm
     + table(["اسم المؤسسة","المعرّف","الحالة","تاريخ الإنشاء"], rowsHtml, "لا توجد مؤسسات متاحة لهذا الحساب.");
 }
 
 function renderSchools(data) {
   const rowsHtml = data.rows.map((row) => `<tr><td><strong>${esc(row.name)}</strong><small>${esc(row.code)}</small></td><td>${esc(row.slug)}</td><td>${badge(row.status)}</td><td>${esc(row.default_locale)}</td><td>${esc(row.timezone)}</td></tr>`);
-  const canManage = has("platform.schools.manage") || has("schools.manage");
-  const onboardingNotice = canManage
-    ? `<div class="info-banner">إنشاء مدرسة جديدة سيُفعّل من خلال دعوة مالكها في عملية onboarding الآمنة. لن ننشئ سجل مدرسة منفصلًا عن حساب مسؤولها.</div>`
-    : "";
-  const schemaNotice = canManage
-    ? `<div class="info-banner">إعدادات الدولة والمنهج وسياسات اللغة المتقدمة غير مفعّلة بعد؛ مخطط قاعدة الإنتاج الحالي لا يحتوي أعمدتها أو جدول إعدادات المواد. لن نعرض نماذج حفظ غير متصلة بقاعدة البيانات.</div>`
+  const canCreate = has("platform.schools.manage") ||
+    (has("schools.manage") && state.context.scope === "tenant");
+  const tenants = data.tenants ?? [];
+  const tenantSelect = state.context.tenantId
+    ? `<input type="hidden" name="tenant_id" value="${esc(state.context.tenantId)}"/>`
+    : `<label class="field"><span>المؤسسة</span><select name="tenant_id" required><option value="">اختر مؤسسة</option>${tenants.map((tenant) => `<option value="${esc(tenant.id)}">${esc(tenant.display_name)}</option>`).join("")}</select></label>`;
+  const createForm = canCreate ? `
+    <section class="panel">
+      <div class="panel-heading"><div><h3>إنشاء مدرسة ودعوة مالكها</h3><p>لا يتم إنشاء مدرسة بلا حساب مالك ودعوة دخول.</p></div></div>
+      <form class="form-grid compact-form" data-form="create-school">
+        ${tenantSelect}
+        <label class="field"><span>اسم المدرسة</span><input name="name" required maxlength="180"/></label>
+        <label class="field"><span>الرابط المختصر</span><input name="slug" required maxlength="64" pattern="[a-z0-9-]+" dir="ltr"/></label>
+        <label class="field"><span>كود المدرسة (اختياري)</span><input name="code" maxlength="40" dir="ltr"/></label>
+        <label class="field"><span>بريد مالك المدرسة</span><input name="owner_email" type="email" required maxlength="254" dir="ltr"/></label>
+        <label class="field"><span>اسم مالك المدرسة</span><input name="owner_display_name" required maxlength="180"/></label>
+        <div class="form-actions"><button class="button button-primary" type="submit" ${!state.context.tenantId && !tenants.length ? "disabled" : ""}>إنشاء المدرسة وإرسال الدعوة</button></div>
+      </form>
+    </section>` : "";
+  const schemaNotice = has("platform.schools.manage") || has("schools.manage")
+    ? `<div class="info-banner">إعدادات الدولة والمنهج وسياسات اللغة المتقدمة مؤجلة؛ مخطط قاعدة الإنتاج الحالي لا يحتوي أعمدتها أو جدول إعدادات المواد.</div>`
     : "";
   return sectionHead("المدارس", "المدارس المتاحة ضمن نطاق العضوية والصلاحيات الحالية.")
-    + onboardingNotice
+    + createForm
     + schemaNotice
     + table(["المدرسة","الرابط المختصر","الحالة","لغة الواجهة","المنطقة الزمنية"], rowsHtml, "لا توجد مدارس متاحة لهذا الحساب.");
 }
 
 function renderStudents(data) {
   const rowsHtml = data.rows.map((row) => `<tr><td>${esc(row.student_number)}</td><td><strong>${esc([row.first_name,row.middle_name,row.last_name].filter(Boolean).join(" "))}</strong></td><td>${dateText(row.date_of_birth)}</td><td>${dateText(row.admission_date)}</td><td>${badge(row.status)}</td></tr>`);
-  const canManage = has("students.manage") && (state.context.tenantId || state.context.scope === "platform");
-  const accountNotice = canManage
-    ? `<div class="info-banner">إضافة حساب طالب متوقفة مؤقتًا. النموذج السابق كان ينشئ سجلًا مدرسيًا فقط، ولا ينشئ حساب دخول أو ملف Profile أو عضوية وصلاحية للطالب. سنفعّل الإضافة بعد ربطها بدعوة Auth واختبارات عزل المدارس.</div>`
-    : "";
+  const canManage = has("students.manage") && Boolean(state.context.tenantId);
+  const classRows = data.classes ?? [];
+  const schoolSelect = state.context.schoolId
+    ? `<input type="hidden" name="school_id" value="${esc(state.context.schoolId)}"/>`
+    : `<label class="field"><span>المدرسة</span><select name="school_id" required><option value="">اختر مدرسة</option>${schoolOptions()}</select></label>`;
+  const classOptions = (schoolId = "") => classRows
+    .filter((item) => !schoolId || item.school_id === schoolId)
+    .map((item) => `<option value="${esc(item.id)}" data-school-id="${esc(item.school_id)}">${esc(item.name)}</option>`)
+    .join("");
+  const studentForm = canManage ? `
+    <section class="panel">
+      <div class="panel-heading"><div><h3>دعوة طالب وتسجيله في الفصل</h3><p>يُنشأ حساب دخول وسجل طالب وعضوية وتسجيل فعلي في السنة الدراسية للفصل.</p></div></div>
+      <form class="form-grid compact-form" data-form="invite-student">
+        ${schoolSelect}
+        <label class="field"><span>البريد الإلكتروني للطالب</span><input name="email" type="email" required maxlength="254" dir="ltr"/></label>
+        <label class="field"><span>الاسم الأول</span><input name="first_name" required maxlength="100"/></label>
+        <label class="field"><span>اسم العائلة</span><input name="last_name" required maxlength="100"/></label>
+        <label class="field"><span>رقم الطالب</span><input name="student_number" required maxlength="64" dir="ltr"/></label>
+        <label class="field"><span>تاريخ الميلاد (اختياري)</span><input name="date_of_birth" type="date"/></label>
+        <label class="field"><span>تاريخ الالتحاق (اختياري)</span><input name="admission_date" type="date"/></label>
+        <label class="field field-wide"><span>الفصل أو الفصول</span><select name="class_ids" multiple size="4" required>${classOptions(state.context.schoolId ?? "")}</select><small>اختر فصلًا واحدًا على الأقل. يجب أن تكون كل الفصول من المدرسة المحددة.</small></label>
+        <div class="form-actions"><button class="button button-primary" type="submit" ${!classRows.length ? "disabled" : ""}>دعوة الطالب</button></div>
+      </form>
+      ${!classRows.length ? emptyState("لا توجد فصول متاحة للتسجيل. أنشئ الفصول والسنة الدراسية أولًا.") : ""}
+    </section>` : "";
+  const studentOptions = data.rows.map((item) => `<option value="${esc(item.id)}" data-school-id="${esc(item.school_id)}">${esc([item.first_name,item.middle_name,item.last_name].filter(Boolean).join(" "))} — ${esc(item.student_number)}</option>`).join("");
+  const parentForm = canManage ? `
+    <section class="panel">
+      <div class="panel-heading"><div><h3>دعوة ولي أمر وربطه بالأبناء</h3><p>يتم إنشاء حساب ولي الأمر وسجل Guardian وروابط الأبناء في المدرسة نفسها.</p></div></div>
+      <form class="form-grid compact-form" data-form="invite-parent">
+        ${schoolSelect}
+        <label class="field"><span>بريد ولي الأمر</span><input name="email" type="email" required maxlength="254" dir="ltr"/></label>
+        <label class="field"><span>الاسم الأول</span><input name="first_name" required maxlength="100"/></label>
+        <label class="field"><span>اسم العائلة</span><input name="last_name" required maxlength="100"/></label>
+        <label class="field"><span>صلة القرابة</span><select name="relationship" required><option value="father">الأب</option><option value="mother">الأم</option><option value="guardian">ولي أمر</option><option value="other">أخرى</option></select></label>
+        <label class="check-field"><input type="checkbox" name="is_primary"/><span>ولي الأمر الأساسي</span></label>
+        <label class="field field-wide"><span>الأبناء المرتبطون</span><select name="student_ids" multiple size="4" required>${studentOptions}</select></label>
+        <div class="form-actions"><button class="button button-primary" type="submit" ${!data.rows.length ? "disabled" : ""}>دعوة ولي الأمر</button></div>
+      </form>
+    </section>` : "";
   const notice = ["parent","student"].includes(state.context.roleKey)
-    ? `<div class="info-banner">يعرض هذا القسم سجلات الطلاب المرتبطة بحسابك فقط. إنشاء ملف طالب مستقل يحتاج تفعيل migration الهوية العالمية على قاعدة الإنتاج.</div>`
+    ? `<div class="info-banner">يعرض هذا القسم سجلات الطلاب المرتبطة بحسابك فقط.</div>`
     : "";
-  return sectionHead("الطلاب", "السجلات المدرسية التي تسمح صلاحياتك بقراءتها.")
-    + accountNotice
+  return sectionHead("الطلاب", "السجلات المدرسية والتسجيلات الفعلية في الفصول.")
+    + studentForm
+    + parentForm
     + notice
     + table(["رقم الطالب","الاسم","تاريخ الميلاد","تاريخ الالتحاق","الحالة"], rowsHtml, "لا توجد سجلات طلاب متاحة في هذا النطاق.");
 }
 
 function renderTeachers(data) {
   const rowsHtml = data.rows.map((row) => `<tr><td>${esc(row.employee_number)}</td><td><strong>${esc([row.first_name,row.last_name].filter(Boolean).join(" "))}</strong></td><td>${esc(row.email)}</td><td>${esc(row.phone)}</td><td>${badge(row.status)}</td></tr>`);
-  const canManage = has("teachers.manage") && state.context.tenantId;
-  const accountNotice = canManage
-    ? `<div class="info-banner">إضافة حساب معلم متوقفة مؤقتًا. النموذج السابق كان ينشئ سجل المعلم فقط، ولا ينشئ حساب دخول أو ملف Profile أو عضوية وصلاحيات على الفصول. سنفعّلها بعد تنفيذ دعوة Auth وربط المعلم بالفصول المحددة واختبار الصلاحيات.</div>`
-    : "";
-  return sectionHead("المعلمون", "سجلات أعضاء هيئة التدريس ضمن نطاقك.")
-    + accountNotice
+  const canManage = has("teachers.manage") && Boolean(state.context.tenantId);
+  const classRows = data.classes ?? [];
+  const schoolSelect = state.context.schoolId
+    ? `<input type="hidden" name="school_id" value="${esc(state.context.schoolId)}"/>`
+    : `<label class="field"><span>المدرسة</span><select name="school_id" required><option value="">اختر مدرسة</option>${schoolOptions()}</select></label>`;
+  const classOptions = classRows
+    .filter((item) => !state.context.schoolId || item.school_id === state.context.schoolId)
+    .map((item) => `<option value="${esc(item.id)}" data-school-id="${esc(item.school_id)}">${esc(item.name)}</option>`)
+    .join("");
+  const inviteForm = canManage ? `
+    <section class="panel">
+      <div class="panel-heading"><div><h3>دعوة معلم وتعيينه للفصول</h3><p>يُنشأ حساب المعلم وملفه الوظيفي ويُمنح دورًا على الفصول المختارة فقط.</p></div></div>
+      <form class="form-grid compact-form" data-form="invite-teacher">
+        ${schoolSelect}
+        <label class="field"><span>البريد الإلكتروني</span><input name="email" type="email" required maxlength="254" dir="ltr"/></label>
+        <label class="field"><span>الاسم الأول</span><input name="first_name" required maxlength="100"/></label>
+        <label class="field"><span>اسم العائلة</span><input name="last_name" required maxlength="100"/></label>
+        <label class="field"><span>الرقم الوظيفي (اختياري)</span><input name="employee_number" maxlength="64" dir="ltr"/></label>
+        <label class="field"><span>الهاتف (اختياري)</span><input name="phone" maxlength="40" dir="ltr"/></label>
+        <label class="field field-wide"><span>الفصول المسندة</span><select name="class_ids" multiple size="4" required>${classOptions}</select><small>يجب اختيار فصل واحد على الأقل.</small></label>
+        <div class="form-actions"><button class="button button-primary" type="submit" ${!classRows.length ? "disabled" : ""}>دعوة المعلم</button></div>
+      </form>
+      ${!classRows.length ? emptyState("لا توجد فصول متاحة لإسناد المعلم إليها.") : ""}
+    </section>` : "";
+  return sectionHead("المعلمون", "سجلات أعضاء هيئة التدريس وتعيينات الفصول.")
+    + inviteForm
     + table(["الرقم الوظيفي","الاسم","البريد الإلكتروني","الهاتف","الحالة"], rowsHtml, "لا توجد سجلات معلمين متاحة في هذا النطاق.");
 }
 
