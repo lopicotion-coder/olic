@@ -77,6 +77,7 @@ These are not dropped product ideas; they are explicitly outside the 30 November
 - Validate constraints, functions, RLS, grants, triggers, indexes and rollback/recovery behavior.
 - Run tenant isolation and role-matrix tests for platform admin, school admin, teacher, assistant, student and parent.
 - Fix P0 issue #15 in `content_items_read`: school-wide content may use school access; class-scoped content must require `app.can_access_class`. Add negative student/parent/teacher tests proving that users cannot read lessons for unassigned classes.
+- Fix P1 issue #16: enforce `grades.score <= assessments.max_score` in the database/controlled RPC, not only in browser validation. Test valid boundaries, negative scores, cross-school IDs, and duplicate grades.
 - Configure provider routes, model allowlists, token prices, tenant/platform budgets, rate limits and secrets in staging.
 - Verify interactive and background AI requests, reservation/settlement, failure paths, request caps, queue processing, dead letters and monitoring.
 - Test real curriculum ingestion and citations with permitted sample content.
