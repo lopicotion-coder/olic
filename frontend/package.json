@@ -1,0 +1,11 @@
+{
+  "name": "my-school-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/ui.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
