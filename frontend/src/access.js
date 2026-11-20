@@ -93,7 +93,12 @@ export function visibleSections(context) {
   if (allow(["classes.read", "classes.manage"])) sections.push("classes");
   if (allow(["attendance.read", "attendance.manage"])) sections.push("attendance");
   if (allow(["assignments.read", "assignments.manage", "assignments.submit"])) sections.push("assignments");
-  if (allow(["grades.read", "grades.manage"])) sections.push("grades");
+  if (allow(["grades.read", "grades.manage"]) || ["parent", "student"].includes(context?.roleKey)) sections.push("grades");
+  if (allow(["exams.read", "exams.manage"])) sections.push("exams");
+  if (allow(["timetable.read", "timetable.manage"])) sections.push("timetable");
+  if (allow(["content.read", "content.manage"])) sections.push("content");
+  if (allow(["fees.read", "fees.manage", "fees.payments.record"]) || ["parent", "student"].includes(context?.roleKey)) sections.push("fees");
+  if (allow(["support.read", "support.create", "support.manage"])) sections.push("support");
   if (allow(["conversations.read", "conversations.create", "conversations.manage"])) sections.push("messages");
   if (allow(["notifications.read", "notifications.manage"])) sections.push("notifications");
   if (allow(["tenant.billing.read", "tenant.billing.manage", "platform.billing.manage"])) sections.push("billing");
