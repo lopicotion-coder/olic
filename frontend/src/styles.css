@@ -272,3 +272,35 @@ td small { display: block; margin-top: 4px; color: #91a0af; font-size: 10px; whi
   .welcome-panel p { font-size: 10px; }
   .context-summary { grid-template-columns: 1fr 1fr; }
 }
+
+
+.list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-color, #e6e8eb);
+}
+.list-row:last-child { border-bottom: 0; }
+.list-row small { color: var(--muted, #697386); }
+.knowledge-source-card { margin: 14px 0; display: grid; gap: 12px; }
+.knowledge-source-card .section-head { margin-bottom: 0; }
+.knowledge-review-form { border-top: 1px solid var(--border-color, #e6e8eb); padding-top: 14px; }
+.knowledge-review-form .form-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.field-hint { color: var(--muted, #697386); font-size: 12px; margin: 0; }
+.check-field { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+.check-field input { width: 17px; height: 17px; flex: 0 0 auto; }
+.school-learning-settings-list { display: grid; gap: 10px; margin-top: 14px; }
+.school-learning-settings summary { cursor: pointer; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.school-learning-settings summary span { color: var(--muted, #697386); font-size: 12px; }
+.school-learning-settings[open] summary { margin-bottom: 16px; }
+.practice-question { margin: 12px 0; }
+.practice-question > p { font-size: 15px; line-height: 1.9; white-space: pre-wrap; }
+.practice-question .form-grid { display: grid; gap: 10px; }
+.practice-question .check-field { border: 1px solid var(--border-color, #e6e8eb); border-radius: 10px; padding: 10px 12px; }
+@media (max-width: 720px) {
+  .list-row { align-items: flex-start; }
+  .school-learning-settings summary { display: grid; }
+}

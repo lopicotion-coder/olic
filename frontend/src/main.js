@@ -15,6 +15,7 @@ import {
   renderContent,
   renderSupport,
 } from "./sections.js";
+import { renderKnowledgeConsole, renderLearningDashboard } from "./knowledge.js";
 
 const root = document.querySelector("#app");
 const STORAGE_CONTEXT_KEY = "my-school:last-context";
@@ -64,6 +65,8 @@ const NAV_LABELS = {
   notifications: "الإشعارات",
   billing: "الاشتراكات والفواتير",
   questions: "بنك الأسئلة",
+  knowledge: "محرك المعرفة",
+  learning: "تقدّم الطالب",
   fees: "الرسوم والمدفوعات",
   timetable: "الجدول الدراسي",
   exams: "الامتحانات",
@@ -75,6 +78,7 @@ const NAV_ICONS = {
   overview: "◫", tenants: "▦", schools: "⌂", students: "♙", teachers: "♟",
   classes: "▤", attendance: "◷", assignments: "✓", grades: "▥", messages: "✉",
   notifications: "♧", billing: "¤", questions: "◇",
+  knowledge: "⌘", learning: "◉",
   fees: "¤", timetable: "◷", exams: "▦", content: "▤", support: "?",
   profile: "◎",
 };
@@ -99,6 +103,8 @@ const state = {
   authError: "",
   recoveryMode: false,
   recoveryComplete: false,
+  practiceSet: [],
+  lastPracticeResult: null,
 };
 
 function esc(value) {
@@ -374,6 +380,8 @@ function renderSection() {
     case "content": return renderContent(data, state.context, { has });
     case "support": return renderSupport(data, state.context, { has });
     case "questions": return renderQuestions(data);
+    case "knowledge": return renderKnowledgeConsole(data);
+    case "learning": return renderLearningDashboard(data);
     case "profile": return renderProfile(data);
     default: return emptyState("هذا القسم غير متاح في السياق الحالي.");
   }
@@ -446,11 +454,14 @@ async function loadSectionData() {
       return { rows: await rows(supabase.from("tenants").select("id,legal_name,display_name,slug,status,created_at").order("display_name").limit(300)) };
     case "schools": {
       const [schoolRows, tenants] = await Promise.all([
-        rows(scoped("schools", "id,tenant_id,name,code,slug,status,default_locale,timezone,created_at", { tenant: true, school: false, order: "name", limit: 300 })),
-        has("platform.schools.manage") ? Promise.resolve(state.access.tenants)
-          : Promise.resolve([]),
+        rows(scoped("schools", "id,tenant_id,name,code,slug,status,default_locale,timezone,country_code,education_system,curriculum_board,school_track,instruction_language_policy,created_at", { tenant: true, school: false, order: "name", limit: 300 })),
+        has("platform.schools.manage") ? Promise.resolve(state.access.tenants) : Promise.resolve([]),
       ]);
-      return { rows: schoolRows, tenants };
+      const schoolIds = schoolRows.map((school) => school.id);
+      const subjectPolicies = schoolIds.length ? await rows(supabase.from("school_subject_learning_policies")
+        .select("id,tenant_id,school_id,subject_code,instruction_language_policy,target_language_level,curriculum_alignment,updated_at")
+        .in("school_id",schoolIds).order("subject_code")) : [];
+      return { rows: schoolRows, tenants, subjectPolicies };
     }
     case "students": {
       let studentRows = [];
@@ -612,7 +623,45 @@ async function loadSectionData() {
     }
     case "support":
       return { rows: await fetchScoped(supabase, "support_tickets", "id,tenant_id,school_id,created_by,created_for_user_id,assigned_to_user_id,title,description,category,status,priority,source,resolved_at,closed_at,created_at,updated_at,closure_reason", ctx, { tenant: true, school: true, order: "created_at", limit: 300 }), schools: state.access.schools };
-    case "questions":
+    case "knowledge": {
+      if (!has("platform.knowledge.manage")) throw new Error("لا تملك صلاحية إدارة المعرفة المركزية.");
+      const sources = await rows(supabase.from("curriculum_sources").select("id,title,publisher,source_kind,country_code,education_system,curriculum_board,subject_code,subject_name,grade_code,grade_label,language_code,status,rights_status,permitted_uses,created_at").eq("sharing_scope","platform").order("created_at",{ascending:false}).limit(300));
+      const sourceIds = sources.map((item) => item.id);
+      const [versions, concepts, questions, mappings] = await Promise.all([
+        sourceIds.length ? rows(supabase.from("curriculum_source_versions").select("id,source_id,version_label,academic_year_label,source_url,extraction_profile,ingestion_status,page_count,file_sha256,extraction_metadata,created_at").in("source_id",sourceIds).order("created_at",{ascending:false}).limit(1000)) : Promise.resolve([]),
+        rows(supabase.from("curriculum_concepts").select("id,country_code,education_system,curriculum_board,subject_code,grade_code,concept_key,title,description,status").order("country_code").order("subject_code").limit(1000)),
+        rows(supabase.from("question_bank").select("id,subject_code,grade_code,question_text,question_type").eq("review_status","approved").eq("record_status","active").order("subject_code").limit(500)),
+        rows(supabase.from("question_concept_mappings").select("id,question_id,concept_id,mapping_type,relevance_weight,curriculum_concepts(title)").order("created_at",{ascending:false}).limit(1000)),
+      ]);
+      return { sources, versions, concepts, questions, mappings };
+    }
+    case "learning": {
+      let students = [];
+      if (ctx.roleKey === "student") students = await fetchMyStudentRecords(supabase,state.user.id);
+      else if (ctx.roleKey === "parent") students = await fetchGuardianStudentRecords(supabase,state.user.id);
+      else if (has("students.read")) students = await fetchScoped(supabase,"students","id,tenant_id,school_id,student_number,first_name,middle_name,last_name,status",ctx,{order:"first_name",limit:500});
+      const studentIds = [...new Set(students.map((item)=>item.id))];
+      const mastery = studentIds.length ? await rows(supabase.from("student_skill_mastery")
+        .select("id,tenant_id,school_id,student_id,concept_id,mastery_score,confidence_score,evidence_count,last_evidence_at,updated_at")
+        .in("student_id",studentIds).order("mastery_score",{ascending:true}).limit(2000)) : [];
+      const conceptIds = [...new Set(mastery.map((item)=>item.concept_id))];
+      const concepts = conceptIds.length ? await rows(supabase.from("curriculum_concepts")
+        .select("id,country_code,subject_code,grade_code,concept_key,title,status").in("id",conceptIds)) : [];
+      const conceptsById = Object.fromEntries(concepts.map((item)=>[item.id,item]));
+      const studentNameById = Object.fromEntries(students.map((student)=>[student.id,[student.first_name,student.middle_name,student.last_name].filter(Boolean).join(" ")]));
+      const namedMastery = mastery.map((item)=>({...item,student_name:studentNameById[item.student_id]??""}));
+      let tracks = [];
+      if (ctx.roleKey === "student") {
+        const trackSets = await Promise.all(students.map(async (student)=>{
+          const {data,error}=await supabase.rpc("get_student_learning_tracks",{p_student_id:student.id});
+          if(error) throw error;
+          return (data??[]).map((track)=>({...track,student_id:student.id,student_name:studentNameById[student.id]}));
+        }));
+        tracks = trackSets.flat();
+      }
+      return { students, mastery:namedMastery, conceptsById, tracks, practice:state.practiceSet??[], lastPracticeResult:state.lastPracticeResult, canPractice:ctx.roleKey==="student" };
+    }
+        case "questions":
       return { rows: [], contextNotConfigured: true };
     case "profile": {
       const { data, error } = await supabase.from("profiles")
@@ -657,7 +706,7 @@ function renderTenants(data) {
 }
 
 function renderSchools(data) {
-  const rowsHtml = data.rows.map((row) => `<tr><td><strong>${esc(row.name)}</strong><small>${esc(row.code)}</small></td><td>${esc(row.slug)}</td><td>${badge(row.status)}</td><td>${esc(row.default_locale)}</td><td>${esc(row.timezone)}</td></tr>`);
+  const rowsHtml = data.rows.map((row) => `<tr><td><strong>${esc(row.name)}</strong><small>${esc(row.code)}</small></td><td>${esc(row.slug)}</td><td>${badge(row.status)}</td><td>${esc(row.default_locale)}</td><td>${esc(row.timezone)}</td><td>${esc(row.country_code || "غير محدد")} · ${esc(row.school_track || "غير محدد")}</td></tr>`);
   const canManage = has("platform.schools.manage") || has("schools.manage");
   const form = canManage ? `
     <form class="form-grid compact-form" data-form="create-school">
@@ -665,13 +714,55 @@ function renderSchools(data) {
       <label class="field"><span>اسم المدرسة</span><input name="name" required maxlength="180"/></label>
       <label class="field"><span>الرابط المختصر</span><input name="slug" required minlength="3" maxlength="63" pattern="[a-z0-9][a-z0-9-]{1,61}[a-z0-9]" placeholder="school-name" dir="ltr"/></label>
       <label class="field"><span>الكود (اختياري)</span><input name="code" maxlength="40"/></label>
-      <label class="field"><span>اللغة الافتراضية (اختياري)</span><select name="default_locale"><option value="">استخدم الافتراضي</option><option value="ar">العربية</option><option value="en">English</option></select></label>
-      <label class="field"><span>المنطقة الزمنية (اختياري)</span><input name="timezone" maxlength="80" placeholder="Africa/Cairo" dir="ltr"/></label>
+      <label class="field"><span>لغة الواجهة</span><select name="default_locale"><option value="ar">العربية</option><option value="en">English</option></select></label>
+      <label class="field"><span>الدولة (ISO alpha-2)</span><input name="country_code" value="EG" maxlength="2" pattern="[A-Z]{2}" required dir="ltr"/></label>
+      <label class="field"><span>النظام التعليمي</span><input name="education_system" maxlength="120"/></label>
+      <label class="field"><span>المجلس / المنهج</span><input name="curriculum_board" maxlength="160"/></label>
+      <label class="field"><span>نوع المدرسة</span><select name="school_track"><option value="">غير محدد</option><option value="national_arabic">حكومي / عربي</option><option value="national_language">قومي لغات</option><option value="international">دولي</option><option value="other">أخرى</option></select></label>
+      <label class="field"><span>لغة التدريس الافتراضية</span><select name="instruction_language_policy"><option value="adaptive">حسب المادة والطالب</option><option value="ar">العربية</option><option value="en">English</option><option value="bilingual">ثنائي اللغة</option></select></label>
+      <label class="field"><span>المنطقة الزمنية</span><input name="timezone" value="Africa/Cairo" maxlength="80" dir="ltr"/></label>
       <div class="form-actions"><button class="button button-primary" type="submit" ${!state.context.tenantId && !(data.tenants??[]).length ? "disabled" : ""}>إنشاء مدرسة</button></div>
     </form>` : "";
+  const profileForms = canManage ? data.rows.map((school) => `
+    <details class="panel school-learning-settings">
+      <summary><strong>${esc(school.name)}</strong><span>ضبط المنهج وطريقة التدريس للذكاء الاصطناعي</span></summary>
+      <form class="form-grid compact-form" data-form="update-school-learning-profile">
+        <input type="hidden" name="school_id" value="${esc(school.id)}"/>
+        <label class="field"><span>الدولة (ISO alpha-2)</span><input name="country_code" value="${esc(school.country_code || "")}" maxlength="2" pattern="[A-Z]{2}" required dir="ltr"/></label>
+        <label class="field"><span>النظام التعليمي</span><input name="education_system" value="${esc(school.education_system)}" maxlength="120"/></label>
+        <label class="field"><span>المجلس / المنهج</span><input name="curriculum_board" value="${esc(school.curriculum_board)}" maxlength="160"/></label>
+        <label class="field"><span>نوع المدرسة</span><select name="school_track">
+          <option value="" ${!school.school_track?"selected":""}>غير محدد</option>
+          <option value="national_arabic" ${school.school_track==="national_arabic"?"selected":""}>حكومي / عربي</option>
+          <option value="national_language" ${school.school_track==="national_language"?"selected":""}>قومي لغات</option>
+          <option value="international" ${school.school_track==="international"?"selected":""}>دولي</option>
+          <option value="other" ${school.school_track==="other"?"selected":""}>أخرى</option>
+        </select></label>
+        <label class="field"><span>لغة التدريس الافتراضية</span><select name="instruction_language_policy">
+          <option value="adaptive" ${school.instruction_language_policy==="adaptive"?"selected":""}>حسب المادة والطالب</option>
+          <option value="ar" ${school.instruction_language_policy==="ar"?"selected":""}>العربية</option>
+          <option value="en" ${school.instruction_language_policy==="en"?"selected":""}>English</option>
+          <option value="bilingual" ${school.instruction_language_policy==="bilingual"?"selected":""}>ثنائي اللغة</option>
+        </select></label>
+        <div class="form-actions"><button class="button button-secondary" type="submit">حفظ إعدادات المدرسة</button></div>
+      </form>
+    </details>`).join("") : "";
   return sectionHead("المدارس", "المدارس المتاحة ضمن نطاق العضوية والصلاحيات الحالية.", canManage ? `<button class="button button-secondary" data-action="toggle-form" data-target="school-create-form">إضافة مدرسة</button>` : "")
     + (canManage ? `<section id="school-create-form" class="panel form-panel hidden">${form}</section>` : "")
-    + table(["المدرسة","الرابط المختصر","الحالة","اللغة","المنطقة الزمنية"], rowsHtml, "لا توجد مدارس متاحة لهذا الحساب.");
+    + table(["المدرسة","الرابط المختصر","الحالة","لغة الواجهة","المنطقة الزمنية","السياق التعليمي"], rowsHtml, "لا توجد مدارس متاحة لهذا الحساب.")
+    + (profileForms ? `<div class="school-learning-settings-list">${profileForms}</div>` : "")
+    + (canManage ? `
+      <section class="panel"><div class="panel-heading"><h3>إعدادات كل مادة للذكاء الاصطناعي</h3></div>
+        <form class="form-grid compact-form" data-form="save-school-subject-policy">
+          <label class="field"><span>المدرسة</span><select name="school_id" required><option value="">اختر مدرسة</option>${data.rows.map((school)=>`<option value="${esc(school.id)}">${esc(school.name)}</option>`).join("")}</select></label>
+          <label class="field"><span>رمز المادة</span><input name="subject_code" required maxlength="80" dir="ltr"/></label>
+          <label class="field"><span>لغة الشرح</span><select name="instruction_language_policy"><option value="adaptive">تكيّفية حسب الطالب والمصدر</option><option value="ar">العربية</option><option value="en">English</option><option value="bilingual">ثنائي اللغة</option></select></label>
+          <label class="field"><span>المستوى المستهدف للمادة (اختياري)</span><input name="target_language_level" maxlength="32" placeholder="B1 / B2 / C1" dir="ltr"/></label>
+          <label class="field"><span>ملاحظة مواءمة المنهج</span><input name="curriculum_alignment" maxlength="300"/></label>
+          <div class="form-actions"><button class="button button-secondary" type="submit">حفظ إعداد المادة</button></div>
+        </form>
+        ${table(["المدرسة","المادة","لغة الشرح","المستوى المستهدف","آخر تحديث"],(data.subjectPolicies??[]).map((policy)=>`<tr><td>${esc(data.rows.find((school)=>school.id===policy.school_id)?.name??"")}</td><td>${esc(policy.subject_code)}</td><td>${esc(policy.instruction_language_policy)}</td><td>${esc(policy.target_language_level??"—")}</td><td>${dateText(policy.updated_at)}</td></tr>`),"لا توجد إعدادات خاصة بالمواد حتى الآن.")}
+      </section>` : "");
 }
 
 function renderStudents(data) {
@@ -1033,11 +1124,165 @@ async function perform(action) {
         throw new Error("الرابط المختصر يجب أن يكون 3 إلى 63 حرفًا إنجليزيًا صغيرًا أو أرقامًا، ويمكن استخدام الشرطة الوسطية.");
       }
       const payload = { tenant_id: tenantId, name: required(action.formData,"name"), slug };
-      for (const field of ["code","default_locale","timezone"]) {
+      for (const field of ["code","default_locale","timezone","education_system","curriculum_board","school_track"]) {
         const value = optional(action.formData,field);
         if (value) payload[field] = value;
       }
+      payload.country_code = required(action.formData,"country_code").toUpperCase();
+      payload.instruction_language_policy = required(action.formData,"instruction_language_policy");
       await mutation(supabase.from("schools").insert(payload),"إنشاء المدرسة");
+      break;
+    }
+    case "save-school-subject-policy": {
+      if (!(has("platform.schools.manage") || has("schools.manage"))) throw new Error("لا تملك صلاحية ضبط لغة المواد.");
+      const schoolId=required(action.formData,"school_id");
+      const school=(state.data?.rows??[]).find((item)=>item.id===schoolId);
+      if(!school) throw new Error("المدرسة خارج نطاق الوصول الحالي.");
+      const subjectCode=required(action.formData,"subject_code").trim();
+      const language=required(action.formData,"instruction_language_policy");
+      if(!["adaptive","ar","en","bilingual"].includes(language)) throw new Error("لغة التدريس غير مدعومة.");
+      await mutation(supabase.from("school_subject_learning_policies").upsert({
+        tenant_id:school.tenant_id,school_id:school.id,subject_code:subjectCode,
+        instruction_language_policy:language,
+        target_language_level:optional(action.formData,"target_language_level")||null,
+        curriculum_alignment:optional(action.formData,"curriculum_alignment")||null,
+        created_by:state.user.id,updated_by:state.user.id,
+      },{onConflict:"school_id,subject_code"}),"حفظ إعداد لغة المادة");
+      break;
+    }
+    case "update-school-learning-profile": {
+      if (!(has("platform.schools.manage") || has("schools.manage"))) throw new Error("لا تملك صلاحية تعديل إعدادات المدرسة.");
+      const school = (state.data?.rows ?? []).find((item)=>item.id===required(action.formData,"school_id"));
+      if (!school) throw new Error("المدرسة ليست ضمن نطاق الوصول الحالي.");
+      const country = required(action.formData,"country_code").toUpperCase();
+      if (!/^[A-Z]{2}$/.test(country)) throw new Error("رمز الدولة يجب أن يكون حرفين كبيرين.");
+      const payload = {
+        country_code: country,
+        education_system: optional(action.formData,"education_system") || null,
+        curriculum_board: optional(action.formData,"curriculum_board") || null,
+        school_track: optional(action.formData,"school_track") || null,
+        instruction_language_policy: required(action.formData,"instruction_language_policy"),
+      };
+      await mutation(supabase.from("schools").update(payload).eq("id",school.id),"تحديث سياق المدرسة التعليمي");
+      break;
+    }
+    case "create-knowledge-source": {
+      if (!has("platform.knowledge.manage")) throw new Error("إدارة مصادر المعرفة متاحة لمسؤولي المنصة فقط.");
+      const sourceUrl = required(action.formData,"source_url");
+      if (!/^https:\/\//i.test(sourceUrl)) throw new Error("يجب أن يكون رابط المصدر HTTPS.");
+      const profile = required(action.formData,"extraction_profile");
+      if (profile !== "standard") throw new Error("هذا المسار يحتاج محرك OCR غير مهيأ بعد. اختر الاستخراج النصي القياسي.");
+      const country = required(action.formData,"country_code").toUpperCase();
+      if (!/^[A-Z]{2}$/.test(country)) throw new Error("رمز الدولة يجب أن يكون حرفين كبيرين.");
+      const year = optional(action.formData,"publication_year");
+      const {error} = await supabase.rpc("platform_create_knowledge_source",{
+        p_title:required(action.formData,"title"),
+        p_source_url:sourceUrl,
+        p_knowledge_role:required(action.formData,"knowledge_role"),
+        p_country_code:country,
+        p_education_system:optional(action.formData,"education_system") || null,
+        p_curriculum_board:optional(action.formData,"curriculum_board") || null,
+        p_subject_code:required(action.formData,"subject_code"),
+        p_subject_name:required(action.formData,"subject_name"),
+        p_grade_code:required(action.formData,"grade_code"),
+        p_grade_label:required(action.formData,"grade_label"),
+        p_language_code:required(action.formData,"language_code"),
+        p_version_label:required(action.formData,"version_label"),
+        p_academic_year_label:optional(action.formData,"academic_year_label") || null,
+        p_publication_year:year ? Number(year) : null,
+        p_extraction_profile:profile,
+        p_publisher:optional(action.formData,"publisher") || null,
+      });
+      if(error) throw error;
+      break;
+    }
+    case "review-knowledge-source": {
+      if (!has("platform.knowledge.manage")) throw new Error("مراجعة المصادر متاحة لمسؤولي المنصة فقط.");
+      const sourceId=required(action.formData,"source_id");
+      const source=(state.data?.sources??[]).find((item)=>item.id===sourceId);
+      if(!source) throw new Error("المصدر غير موجود في قائمة المصادر المركزية.");
+      const decision=required(action.formData,"decision");
+      const uses=action.formData.getAll("permitted_uses").map(String);
+      const allowed=source.source_kind==="model_answer_document"
+        ? ["model_answer_retrieval"] : ["rag","question_generation"];
+      if(uses.some((item)=>!allowed.includes(item))) throw new Error("استخدام غير مسموح لهذا النوع من المصادر.");
+      if(decision==="approve" && !uses.length) throw new Error("اختر استخدامًا واحدًا على الأقل قبل الاعتماد.");
+      const {error}=await supabase.rpc("platform_review_knowledge_source",{
+        p_source_id:sourceId,p_approve:decision==="approve",
+        p_rights_basis:required(action.formData,"rights_basis"),
+        p_rights_reference:optional(action.formData,"rights_reference") || null,
+        p_permitted_uses:decision==="approve"?uses:[],
+      });
+      if(error) throw error;
+      break;
+    }
+    case "create-curriculum-concept": {
+      if (!has("platform.knowledge.manage")) throw new Error("إضافة المفاهيم متاحة لمسؤولي المنصة فقط.");
+      const country=required(action.formData,"country_code").toUpperCase();
+      if(!/^[A-Z]{2}$/.test(country)) throw new Error("رمز الدولة يجب أن يكون حرفين كبيرين.");
+      await mutation(supabase.from("curriculum_concepts").insert({
+        country_code:country,
+        education_system:optional(action.formData,"education_system") || null,
+        curriculum_board:optional(action.formData,"curriculum_board") || null,
+        subject_code:required(action.formData,"subject_code"),
+        grade_code:required(action.formData,"grade_code"),
+        concept_key:required(action.formData,"concept_key"),
+        title:required(action.formData,"title"),
+        description:optional(action.formData,"description") || null,
+        created_by:state.user.id,updated_by:state.user.id,
+      }),"إضافة مفهوم للمنهج");
+      break;
+    }
+    case "map-question-concept": {
+      if (!has("platform.knowledge.manage")) throw new Error("ربط الأسئلة بالمفاهيم متاح لمسؤولي المنصة فقط.");
+      const questionId=required(action.formData,"question_id");
+      const conceptId=required(action.formData,"concept_id");
+      const question=(state.data?.questions??[]).find((item)=>item.id===questionId);
+      const concept=(state.data?.concepts??[]).find((item)=>item.id===conceptId);
+      if(!question||!concept) throw new Error("السؤال والمفهوم يجب أن يكونا من السجلات المتاحة.");
+      if(question.subject_code!==concept.subject_code||question.grade_code!==concept.grade_code) {
+        throw new Error("لا يمكن ربط سؤال بمفهوم من مادة أو صف مختلف.");
+      }
+      const weight=Number(required(action.formData,"relevance_weight"));
+      if(!Number.isFinite(weight)||weight<=0||weight>1) throw new Error("وزن الربط يجب أن يكون أكبر من صفر وحتى 1.");
+      await mutation(supabase.from("question_concept_mappings").insert({
+        question_id:questionId,concept_id:conceptId,
+        mapping_type:required(action.formData,"mapping_type"),
+        relevance_weight:weight,mapped_by:state.user.id,
+      }),"ربط السؤال بالمفهوم");
+      break;
+    }
+    case "start-adaptive-practice": {
+      if(state.context.roleKey!=="student") throw new Error("التدريب التكيفي متاح للطالب صاحب السجل فقط.");
+      const parts=required(action.formData,"track").split("|");
+      if(parts.length!==3) throw new Error("اختر مسارًا دراسيًا صحيحًا.");
+      const [studentId,subjectCode,gradeCode]=parts;
+      const track=(state.data?.tracks??[]).find((item)=>item.student_id===studentId&&item.subject_code===subjectCode&&item.grade_code===gradeCode);
+      if(!track) throw new Error("المسار الدراسي غير متاح لحساب الطالب.");
+      const {data,error}=await supabase.rpc("get_adaptive_practice_set",{
+        p_student_id:studentId,p_subject_code:subjectCode,p_grade_code:gradeCode,p_limit:8,
+      });
+      if(error) throw error;
+      state.practiceSet=data??[];
+      state.lastPracticeResult=null;
+      break;
+    }
+    case "submit-adaptive-answer": {
+      if(state.context.roleKey!=="student") throw new Error("إرسال إجابات التدريب متاح للطالب فقط.");
+      const exposureId=required(action.formData,"exposure_id");
+      if(!(state.data?.practice??[]).some((item)=>item.exposure_id===exposureId)) throw new Error("السؤال ليس ضمن جلسة التدريب الحالية.");
+      const questionType=required(action.formData,"question_type");
+      let answer;
+      if(questionType==="multiple_choice") answer={choice_id:required(action.formData,"choice_id")};
+      else if(questionType==="true_false") answer={value:required(action.formData,"value")==="true"};
+      else if(questionType==="fill_blank") answer={text:required(action.formData,"text")};
+      else throw new Error("نوع السؤال غير متاح للتصحيح الآلي.");
+      const {data,error}=await supabase.rpc("submit_adaptive_question_attempt",{
+        p_exposure_id:exposureId,p_answer:answer,p_idempotency_key:crypto.randomUUID(),
+      });
+      if(error) throw error;
+      state.lastPracticeResult=Array.isArray(data)?data[0]:data;
+      state.practiceSet=(state.practiceSet??[]).filter((item)=>item.exposure_id!==exposureId);
       break;
     }
     case "create-student": {

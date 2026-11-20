@@ -8,6 +8,7 @@ const catalog = {
     { id: "r-school", key: "school_admin", name: "School Admin", scope: "school" },
     { id: "r-teacher", key: "teacher", name: "Teacher", scope: "class" },
     { id: "r-parent", key: "parent", name: "Parent", scope: "school" },
+    { id: "r-student", key: "student", name: "Student", scope: "school" },
   ],
   permissions: [
     { id: "p-platform", key: "platform.tenants.read" },
@@ -15,6 +16,7 @@ const catalog = {
     { id: "p-assignments", key: "assignments.manage" },
     { id: "p-attendance", key: "attendance.manage" },
     { id: "p-messages", key: "conversations.read" },
+    { id: "p-knowledge", key: "platform.knowledge.manage" },
   ],
   rolePermissions: [
     { role_id: "r-platform", permission_id: "p-platform" },
@@ -22,6 +24,7 @@ const catalog = {
     { role_id: "r-school", permission_id: "p-attendance" },
     { role_id: "r-teacher", permission_id: "p-assignments" },
     { role_id: "r-parent", permission_id: "p-messages" },
+    { role_id: "r-platform", permission_id: "p-knowledge" },
   ],
 };
 
@@ -35,7 +38,8 @@ test("platform roles require a platform-only assignment and are not inferred fro
   });
   assert.equal(contexts.length, 1);
   assert.equal(contexts[0].scope, "platform");
-  assert.deepEqual(contexts[0].permissions, ["platform.tenants.read"]);
+  assert.ok(contexts[0].permissions.includes("platform.tenants.read"));
+  assert.ok(contexts[0].permissions.includes("platform.knowledge.manage"));
 });
 
 test("inactive tenant or school memberships do not produce accessible contexts", () => {
@@ -115,4 +119,28 @@ test("contexts with duplicate role assignments do not create duplicate switcher 
     schoolMemberships: [{ tenant_id: "tenant-1", school_id: "school-1", status: "active" }],
   });
   assert.equal(contexts.length, 1);
+});
+
+test("platform knowledge management is not exposed to school staff or parents", () => {
+  const platform = buildAccessContexts({
+    ...catalog,
+    membershipRoles: [{ role_id: "r-platform" }],
+  })[0];
+  const school = buildAccessContexts({
+    ...catalog,
+    membershipRoles: [{ role_id: "r-school", tenant_id: "tenant-1", school_id: "school-1" }],
+    tenantMemberships: [{ tenant_id: "tenant-1", status: "active" }],
+    schoolMemberships: [{ tenant_id: "tenant-1", school_id: "school-1", status: "active" }],
+  })[0];
+  const parent = buildAccessContexts({
+    ...catalog,
+    membershipRoles: [{ role_id: "r-parent", tenant_id: "tenant-1", school_id: "school-1" }],
+    tenantMemberships: [{ tenant_id: "tenant-1", status: "active" }],
+    schoolMemberships: [{ tenant_id: "tenant-1", school_id: "school-1", status: "active" }],
+  })[0];
+  assert.equal(visibleSections(platform).includes("knowledge"), true);
+  assert.equal(visibleSections(school).includes("knowledge"), false);
+  assert.equal(visibleSections(parent).includes("knowledge"), false);
+  assert.equal(visibleSections(school).includes("learning"), true);
+  assert.equal(visibleSections(parent).includes("learning"), true);
 });

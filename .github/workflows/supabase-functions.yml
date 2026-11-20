@@ -30,6 +30,6 @@ jobs:
       - name: Type-check AI worker and gateway
         run: deno check supabase/functions/ai-worker/index.ts supabase/functions/ai-gateway/index.ts
       - name: Run worker and parser tests
-        run: deno test --no-check supabase/functions/ai-worker/worker-auth.test.ts supabase/functions/ai-worker/document-parser.test.ts supabase/functions/ai-worker/budget-math.test.ts supabase/functions/ai-gateway/gateway-auth.test.ts
+        run: deno test --no-check supabase/functions/ai-worker/worker-auth.test.ts supabase/functions/ai-worker/document-parser.test.ts supabase/functions/ai-worker/budget-math.test.ts supabase/functions/ai-worker/source-url.test.ts supabase/functions/ai-gateway/gateway-auth.test.ts
       - name: Verify real provider authentication failure (invalid test key, no charge)
         run: deno test --no-check --allow-net=api.openai.com supabase/functions/ai-worker/provider-error.integration.test.ts

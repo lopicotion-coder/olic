@@ -104,6 +104,8 @@ export function visibleSections(context) {
   if (allow(["fees.read", "fees.manage", "fees.payments.record"]) || ["parent", "student"].includes(context?.roleKey)) sections.push("fees");
   if (allow(["tenant.billing.read", "tenant.billing.manage", "platform.billing.manage"])) sections.push("billing");
   if (allow(["ai.read", "ai.use", "ai.manage"])) sections.push("questions");
+  if (allow(["platform.knowledge.manage"])) sections.push("knowledge");
+  if (allow(["students.read"]) || ["student", "parent"].includes(context?.roleKey)) sections.push("learning");
 
   return [...new Set(sections)];
 }

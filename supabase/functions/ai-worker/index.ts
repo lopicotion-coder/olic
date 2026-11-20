@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { extractCurriculumDocument, chunkCurriculumPages } from "./document-parser.ts";
+import { fetchCurriculumPdf } from "./source-url.ts";
 import { hasValidWorkerToken } from "./worker-auth.ts";
 import { isUnsettledPaidProviderError } from "./background-budget-errors.ts";
 import { assertProviderSuccess } from "./provider-http.ts";
@@ -762,7 +763,7 @@ async function retrieveTutorEvidence(
     onProviderCompleted,
   });
   const queryEmbedding = embeddingBatch.vectors[0];
-  const { data, error } = await supabase.rpc("search_curriculum_hybrid", {
+  const { data, error } = await supabase.rpc("search_curriculum_hybrid_country", {
     p_query_text: row.prompt_text,
     p_query_embedding: vectorLiteral(queryEmbedding),
     p_tenant_id: row.tenant_id,
@@ -776,33 +777,74 @@ async function retrieveTutorEvidence(
   return { evidence: (data ?? []) as CurriculumRetrievalRow[], embeddingTokens: embeddingBatch.promptTokens };
 }
 
-function tutorSystemPrompt(evidence: CurriculumRetrievalRow[]): string {
-  if (evidence.length === 0) {
-    return [
-      "You are My School's curriculum-grounded tutor.",
-      "No approved matching curriculum evidence was found for this student's selected school, subject, grade and edition.",
-      "Do not invent textbook explanations, page numbers, curriculum standards, or claim that something is in the book.",
-      "Politely say that you could not find a matching approved passage, ask the student to verify the subject/grade/edition or provide the correct lesson, and offer only general study guidance clearly labeled as general rather than curriculum content.",
-      "Respond in the student's language, using age-appropriate and supportive wording.",
-    ].join("\n");
-  }
-
+function tutorSystemPrompt(
+  evidence: CurriculumRetrievalRow[],
+  answerModels: Array<{
+    source_title: string;
+    version_label: string;
+    subject_code: string;
+    grade_code: string;
+    page_start: number | null;
+    page_end: number | null;
+    content_text: string;
+    citation_label: string;
+  }> = [],
+  schoolPolicy: Record<string, unknown> = {},
+  subjectPolicy: Record<string, unknown> = {},
+): string {
   const evidenceText = evidence.map((item, index) => [
     `[E${index + 1}] ${item.citation_label}`,
     `Subject: ${item.subject_code}; Grade: ${item.grade_code}; Chapter: ${item.chapter_title ?? "N/A"}; Section: ${item.section_title ?? "N/A"}`,
     item.content_text,
   ].join("\n")).join("\n\n---\n\n");
+  const answerText = answerModels.map((item, index) => [
+    `[A${index + 1}] ${item.citation_label}`,
+    `Subject: ${item.subject_code}; Grade: ${item.grade_code}`,
+    item.content_text,
+  ].join("\n")).join("\n\n---\n\n");
+
+  const country = String(schoolPolicy.country_code ?? "not configured");
+  const track = String(schoolPolicy.school_track ?? "");
+  const languagePolicy = String(subjectPolicy.instruction_language_policy ?? schoolPolicy.instruction_language_policy ?? "adaptive");
+  const targetLanguageLevel = String(subjectPolicy.target_language_level ?? "");
+  const trackGuidance = track === "national_language"
+    ? "This is an explicitly configured national-language school. Teach the subject in English when the source and instruction language are English; build subject vocabulary and English expression through use, not word-for-word translation. Arabic may be a brief scaffold only when needed."
+    : track === "national_arabic"
+      ? "This is an explicitly configured national Arabic-track school. Teach primarily in Arabic while preserving exact English/scientific terminology where required."
+      : track === "international"
+        ? "This is an explicitly configured international track. Follow the subject's configured instruction language and curriculum terminology; do not assume Arabic translation is desired."
+        : "No verified school track is available. Do not infer the track from the school name; follow verified school/subject language settings and the learner's language.";
+  const languageGuidance = languagePolicy === "en"
+    ? "Teach and respond in English. Do not translate English grammar or subject concepts into Arabic by default."
+    : languagePolicy === "ar"
+      ? "Teach and respond primarily in Arabic while retaining accurate technical terms."
+      : languagePolicy === "bilingual"
+        ? "Teach bilingually by explaining concepts across both languages rather than translating every sentence literally."
+        : "Choose the teaching language from verified subject materials and learner interaction; do not guess the learner's proficiency level.";
+  const policyContext = [
+    `Country code: ${country}`,
+    `School track: ${track || "not configured"}`,
+    `Teaching language policy: ${languagePolicy}`,
+    targetLanguageLevel ? `Verified target language level: ${targetLanguageLevel}` : "",
+    trackGuidance,
+    languageGuidance,
+  ].filter(Boolean).join("\n");
 
   return [
-    "You are My School's curriculum-grounded tutor.",
-    "Answer the student's question using only the approved curriculum evidence supplied below.",
-    "Explain the idea step by step in the student's language and at the selected grade level.",
-    "Cite factual explanations with the exact bracketed evidence label, for example [E1]. Include the book/edition/page from that label in the answer.",
-    "Never fabricate a citation, page number, textbook fact, curriculum standard or formula that is not supported by the evidence.",
-    "If the evidence is incomplete or conflicting, say so clearly and ask one focused follow-up question.",
-    "Do not reveal answer keys for active assessments or help bypass assessment integrity rules.",
-    "Approved curriculum evidence:",
-    evidenceText,
+    "You are My School's curriculum-grounded adaptive tutor.",
+    "Use approved curriculum passages as the source of truth for what the learner is expected to know.",
+    "Use approved model-answer passages as a separate reference for expected answer structure, key points and marking language. They are not generic textbook facts.",
+    "Explain rather than blindly copy a model answer. When exam-style wording is requested in learning mode, preserve required terminology and expected points from the approved model answer.",
+    "Adapt depth only to demonstrated evidence. Never fabricate a citation, page, textbook fact, curriculum standard, formula, student level or weakness.",
+    "When curriculum evidence is missing or conflicting, say so clearly. Label general knowledge as general, not as curriculum content.",
+    "Cite curriculum evidence with [E#] and model-answer evidence with [A#], using their exact labels.",
+    "Do not reveal answer keys for active assessments or help bypass assessment integrity rules. The future exam module is separate and is not routed through this tutor retrieval.",
+
+    "Verified school and subject teaching policy:",
+    policyContext,
+    evidenceText ? "Approved curriculum evidence:\n" + evidenceText : "No approved matching curriculum passage was found.",
+    answerText ? "Approved model-answer evidence (separate source class):\n" + answerText : "No approved matching model-answer passage was found.",
+    "Respond in the learner's language and age-appropriate register without assuming an unverified proficiency level.",
   ].join("\n\n");
 }
 
@@ -868,6 +910,23 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
       if (!Number.isFinite(EMBEDDING_PRICE_PER_MILLION) || EMBEDDING_PRICE_PER_MILLION <= 0) {
         throw new Error("AI_EMBEDDING_PRICE_PER_MILLION must be configured before learner RAG requests can run");
       }
+      let schoolPolicy: Record<string, unknown> = {};
+      let subjectPolicy: Record<string, unknown> = {};
+      if (row.school_id) {
+        const { data: school, error: schoolError } = await supabase.from("schools")
+          .select("country_code,education_system,curriculum_board,school_track,instruction_language_policy,default_locale")
+          .eq("id", row.school_id).maybeSingle();
+        dbError("Load verified learner school teaching context", schoolError);
+        schoolPolicy = school ?? {};
+        if (row.subject_code) {
+          const { data: policy, error: policyError } = await supabase.from("school_subject_learning_policies")
+            .select("instruction_language_policy,target_language_level,curriculum_alignment")
+            .eq("school_id", row.school_id).eq("subject_code", row.subject_code).maybeSingle();
+          dbError("Load verified subject teaching policy", policyError);
+          subjectPolicy = policy ?? {};
+        }
+      }
+
       const queryEmbeddingBatch = await generateEmbeddingsWithBackgroundBudget([row.prompt_text], {
         tenantId: null,
         schoolId: null,
@@ -877,7 +936,7 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
         onProviderCompleted: () => { paidBackgroundCallCompleted = true; },
       });
       const queryEmbedding = queryEmbeddingBatch.vectors[0];
-      const { data: evidenceData, error: evidenceError } = await supabase.rpc("search_curriculum_hybrid", {
+      const { data: evidenceData, error: evidenceError } = await supabase.rpc("search_curriculum_hybrid_country", {
         p_query_text: row.prompt_text,
         p_query_embedding: vectorLiteral(queryEmbedding),
         p_tenant_id: row.tenant_id,
@@ -886,12 +945,37 @@ async function processLearnerAiRequests(limit: number): Promise<{ processed: num
         p_grade_code: row.grade_code,
         p_source_version_id: row.source_version_id,
         p_limit: 8,
+        p_country_code: typeof schoolPolicy.country_code === "string" ? schoolPolicy.country_code : null,
       });
       dbError("Retrieve curriculum evidence for independent learner", evidenceError);
       const evidence = (evidenceData ?? []) as CurriculumRetrievalRow[];
 
+      // This search is only called by the learner tutor worker. Exam delivery has no route to model answers.
+      const { data: answerModelData, error: answerModelError } = await supabase.rpc("search_model_answer_hybrid", {
+        p_query_embedding: vectorLiteral(queryEmbedding),
+        p_tenant_id: row.tenant_id,
+        p_school_id: row.school_id,
+        p_country_code: typeof schoolPolicy.country_code === "string" ? schoolPolicy.country_code : null,
+        p_subject_code: row.subject_code,
+        p_grade_code: row.grade_code,
+        p_limit: 5,
+      });
+      dbError("Retrieve approved model-answer evidence for tutor", answerModelError);
+      const answerModels = (answerModelData ?? []) as Array<{
+        chunk_id: string;
+        source_title: string;
+        version_label: string;
+        subject_code: string;
+        grade_code: string;
+        page_start: number | null;
+        page_end: number | null;
+        content_text: string;
+        similarity: number;
+        citation_label: string;
+      }>;
+
       const messages: GatewayMessage[] = [
-        { role: "system", content: tutorSystemPrompt(evidence) },
+        { role: "system", content: tutorSystemPrompt(evidence, answerModels, schoolPolicy, subjectPolicy) },
         { role: "user", content: row.prompt_text },
       ];
       const estimatedInputTokens = estimateInputTokens(messages);
@@ -1804,31 +1888,67 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
     try {
       const { data: version, error: versionErr } = await supabase
         .from("curriculum_source_versions")
-        .select("id,source_id,version_label,ingestion_status,storage_bucket,storage_object_path,extraction_metadata,extracted_text_sha256,file_sha256,page_count")
+        .select("id,source_id,version_label,ingestion_status,storage_bucket,storage_object_path,source_url,extraction_profile,extraction_metadata,extracted_text_sha256,file_sha256,page_count")
         .eq("id", job.source_version_id)
         .single();
       dbError("Load version for ingestion", versionErr);
       if (!version) throw new Error("CURRICULUM_VERSION_NOT_FOUND");
 
+      const { data: sourceRecord, error: sourceRecordError } = await supabase
+        .from("curriculum_sources")
+        .select("id,source_kind")
+        .eq("id", version.source_id)
+        .single();
+      dbError("Load curriculum source kind", sourceRecordError);
+      if (!sourceRecord) throw new Error("CURRICULUM_SOURCE_NOT_FOUND");
+      const isModelAnswer = sourceRecord.source_kind === "model_answer_document";
+
       if (job.stage === "extract" || job.stage === "chunk") {
-        if (!version.storage_object_path) throw new Error("SOURCE_FILE_NOT_AVAILABLE: upload a PDF, DOCX or text file to restart ingestion");
+        let bytes: Uint8Array;
+        let fileName: string;
+        let declaredMimeType = "application/pdf";
+        let storageBucket: string | null = null;
+        let storageObjectPath: string | null = null;
 
-        const bucket = version.storage_bucket || "school-files";
-        const objectPath = version.storage_object_path;
-        const { data: blob, error: downloadError } = await supabase.storage.from(bucket).download(objectPath);
-        dbError("Download curriculum source", downloadError);
-        if (!blob) throw new Error("Storage returned no curriculum source file");
-
-        const bytes = new Uint8Array(await blob.arrayBuffer());
-        const fileSha = await sha256HexBytes(bytes);
-        if (version.file_sha256 && version.file_sha256 !== fileSha) {
-          throw new Error("SOURCE_FILE_HASH_MISMATCH: the uploaded source differs from the registered file hash");
+        if (version.storage_object_path) {
+          storageBucket = version.storage_bucket || "school-files";
+          storageObjectPath = version.storage_object_path;
+          const { data: blob, error: downloadError } = await supabase.storage.from(storageBucket).download(storageObjectPath);
+          dbError("Download curriculum source", downloadError);
+          if (!blob) throw new Error("Storage returned no curriculum source file");
+          bytes = new Uint8Array(await blob.arrayBuffer());
+          fileName = String(
+            (version.extraction_metadata as Record<string, unknown> | null)?.file_name
+              ?? storageObjectPath.split("/").pop() ?? "curriculum-source.pdf"
+          );
+          declaredMimeType = blob.type || declaredMimeType;
+        } else if (version.source_url) {
+          const downloaded = await fetchCurriculumPdf(version.source_url);
+          bytes = downloaded.bytes;
+          fileName = downloaded.fileName;
+          declaredMimeType = downloaded.mimeType;
+        } else {
+          throw new Error("SOURCE_FILE_NOT_AVAILABLE: platform source URL is missing");
         }
 
-        const fileName = String(
-          (version.extraction_metadata as Record<string, unknown> | null)?.file_name ?? objectPath.split("/").pop() ?? "curriculum-source"
-        );
-        const extractedDocument = await extractCurriculumDocument(fileName, blob.type, bytes);
+        const profile = String(version.extraction_profile ?? "standard");
+        if (profile !== "standard") {
+          bytes.fill(0);
+          throw new Error("OCR_PROFILE_NOT_CONFIGURED: this source requires a configured diagram/science OCR provider before it can be marked ready");
+        }
+
+        const fileSha = await sha256HexBytes(bytes);
+        if (version.file_sha256 && version.file_sha256 !== fileSha) {
+          bytes.fill(0);
+          throw new Error("SOURCE_FILE_HASH_MISMATCH: the downloaded source differs from the registered file hash");
+        }
+        const extractedDocument = await (async () => {
+          try {
+            return await extractCurriculumDocument(fileName, declaredMimeType, bytes);
+          } finally {
+            bytes.fill(0);
+          }
+        })();
         const extractedHash = await sha256HexText(extractedDocument.text);
         if (version.extracted_text_sha256 && version.extracted_text_sha256 !== extractedHash) {
           throw new Error("CURRICULUM_VERSION_IMMUTABLE: create a new source version when extracted content changes");
@@ -1859,10 +1979,14 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
           });
         }
 
+        const chunkTable = isModelAnswer ? "model_answer_chunks" : "curriculum_chunks";
+        const chunkRows = isModelAnswer
+          ? rows.map((row) => ({ ...row, review_status: "pending_review" }))
+          : rows;
         const { error: upsertChunksError } = await supabase
-          .from("curriculum_chunks")
-          .upsert(rows, { onConflict: "source_version_id,chunk_index" });
-        dbError("Save extracted curriculum chunks", upsertChunksError);
+          .from(chunkTable)
+          .upsert(chunkRows, { onConflict: "source_version_id,chunk_index" });
+        dbError(isModelAnswer ? "Save extracted model-answer chunks" : "Save extracted curriculum chunks", upsertChunksError);
 
         const nextMetadata = {
           ...(version.extraction_metadata ?? {}),
@@ -1871,11 +1995,14 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
           chunk_count: rows.length,
           source_file_sha256: fileSha,
           extracted_text_sha256: extractedHash,
-          source_file_deleted: false,
-          source_file_delete_pending: true,
+          source_file_deleted: !storageObjectPath,
+          source_file_delete_pending: Boolean(storageObjectPath),
           source_file_delete_error: null,
-          pending_source_bucket: bucket,
-          pending_source_object_path: objectPath,
+          pending_source_bucket: storageBucket,
+          pending_source_object_path: storageObjectPath,
+          source_url: version.source_url ?? null,
+          extraction_profile: profile,
+          knowledge_role: isModelAnswer ? "model_answer" : "curriculum",
         };
 
         const { error: updateVersionError } = await supabase.from("curriculum_source_versions").update({
@@ -1884,7 +2011,7 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
           file_sha256: fileSha,
           page_count: extractedDocument.pageCount,
           extraction_metadata: nextMetadata,
-          storage_object_path: objectPath,
+          storage_object_path: storageObjectPath,
         }).eq("id", version.id);
         dbError("Update extracted curriculum version", updateVersionError);
 
@@ -1904,8 +2031,9 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
         await archiveQueueMessage("myschool_curriculum_ingestion", delivery.msg_id);
         extracted += 1;
       } else if (job.stage === "embed") {
+        const chunkTable = isModelAnswer ? "model_answer_chunks" : "curriculum_chunks";
         const { data: chunks, error: chunksError } = await supabase
-          .from("curriculum_chunks")
+          .from(chunkTable)
           .select("id,content_text")
           .eq("source_version_id", version.id)
           .is("embedding", null)
@@ -1928,7 +2056,7 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
           );
           const vectors = embeddingBatch.vectors;
           for (let index = 0; index < chunks.length; index += 1) {
-            const { error: embeddingUpdateError } = await supabase.from("curriculum_chunks").update({
+            const { error: embeddingUpdateError } = await supabase.from(chunkTable).update({
               embedding: vectorLiteral(vectors[index]),
               embedding_model_key: "openai/text-embedding-3-small",
               embedded_at: new Date().toISOString(),
@@ -1952,11 +2080,11 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
           ingestionHandedOff = true;
         } else {
           const { count: pendingCount, error: pendingError } = await supabase
-            .from("curriculum_chunks")
+            .from(chunkTable)
             .select("id", { count: "exact", head: true })
             .eq("source_version_id", version.id)
             .is("embedding", null);
-          dbError("Verify curriculum embedding completion", pendingError);
+          dbError(isModelAnswer ? "Verify model-answer embedding completion" : "Verify curriculum embedding completion", pendingError);
           if ((pendingCount ?? 0) > 0) throw new Error("Curriculum embedding batch is incomplete");
 
           let sourceFileDeleted = version.storage_object_path === null;
@@ -1993,7 +2121,7 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
             locked_by: null,
             updated_at: new Date().toISOString(),
           }).eq("id", job.id);
-          dbError("Complete curriculum ingestion", completeError);
+          dbError(isModelAnswer ? "Complete model-answer ingestion" : "Complete curriculum ingestion", completeError);
           ingestionFinalized = true;
           embedded += 1;
         }
