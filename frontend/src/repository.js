@@ -93,17 +93,37 @@ export async function loadAccessModel(client, user) {
     schools,
   });
 
-  if (firstPass.some((ctx) => ctx.permissions.includes("platform.tenants.read")) && !tenants.length) {
+  if (firstPass.some((ctx) => ctx.permissions.includes("platform.tenants.read"))) {
     tenants = await readRows(
       client.from("tenants").select("id,display_name,slug,status").order("display_name"),
       "Load platform organizations",
     );
   }
-  if (firstPass.some((ctx) => ctx.permissions.includes("platform.schools.read")) && !schools.length) {
+
+  if (firstPass.some((ctx) => ctx.permissions.includes("platform.schools.read"))) {
     schools = await readRows(
       client.from("schools").select("id,tenant_id,name,slug,status,default_locale,timezone").order("name"),
       "Load platform schools",
     );
+  } else {
+    const manageableTenantIds = [...new Set(firstPass
+      .filter((ctx) => ["schools.read","schools.manage","students.manage","teachers.manage","classes.manage","attendance.manage","assignments.manage"].some((key) => ctx.permissions.includes(key)))
+      .map((ctx) => ctx.tenantId)
+      .filter(Boolean))];
+    const queryTenantIds = [...new Set([...schoolIds.length ? tenants.map((row) => row.id) : [], ...manageableTenantIds])];
+    if (manageableTenantIds.length) {
+      schools = await readRows(
+        client.from("schools").select("id,tenant_id,name,slug,status,default_locale,timezone")
+          .in("tenant_id", manageableTenantIds).order("name"),
+        "Load schools in assigned organizations",
+      );
+    } else if (!schools.length && queryTenantIds.length) {
+      schools = await readRows(
+        client.from("schools").select("id,tenant_id,name,slug,status,default_locale,timezone")
+          .in("id", schoolIds).order("name"),
+        "Load accessible schools",
+      );
+    }
   }
 
   const contexts = buildAccessContexts({
