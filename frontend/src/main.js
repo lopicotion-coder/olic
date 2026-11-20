@@ -2053,7 +2053,7 @@ root.addEventListener("submit", async (event) => {
   try {
     await perform({ type, formData: new FormData(form) });
     showToast("تم حفظ التغيير في قاعدة البيانات.");
-    if (type === "create-school") await refreshAccess();
+    if (["create-tenant", "create-school"].includes(type)) await refreshAccess();
     else await loadSection();
   } catch (error) {
     console.error("My School form action failed", error);
