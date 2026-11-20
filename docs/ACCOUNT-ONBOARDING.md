@@ -85,6 +85,7 @@ Currently supported role keys are `school_admin`, `school_owner`, `supervisor`, 
 Role-specific roster data:
 - `student`: requires `student_number`, `first_name`, and `last_name`; optional `middle_name`, `date_of_birth`, and `admission_date`.
 - `teacher`: requires first/last name and at least one valid `class_id`; optional `employee_number` and `phone`. Each assigned class gets a class-scoped teacher role.
+- `student`: requires at least one valid `class_id`. Each selected class is verified in the same school and an active `student_enrollments` record is created using that class's academic year.
 - `parent`: requires first/last name, `relationship`, and one or more `student_ids` belonging to the same tenant and school. The Guardian profile and child links are provisioned together.
 - `school_admin`, `school_owner`, and `supervisor`: require school membership/role but no separate roster row.
 
@@ -95,8 +96,9 @@ The server validates school/class/student ownership before invitation. It does n
 1. The Edge Function validates the caller, allowed role, target tenant/school, requested class/child IDs, and existing roster uniqueness.
 2. Supabase Auth Admin sends an invite email and returns the new Auth user ID.
 3. The function creates the matching profile, invited tenant/school memberships, scoped role assignments, and applicable roster/guardian relationships.
-4. The function writes an audit event without storing the invitation token or plaintext credentials.
-5. After the invitee verifies the invitation and signs in, the frontend accepts only their own `invited` tenant/school memberships. Existing RLS self-accept policies govern these updates; the UI does not activate another user's membership.
+4. For students, the function creates a class enrollment only after verifying that the class belongs to the same school and loading its actual academic year.
+5. The function writes an audit event without storing the invitation token or plaintext credentials.
+6. After the invitee verifies the invitation and signs in, the frontend accepts only their own `invited` tenant/school memberships. Existing RLS self-accept policies govern these updates; the UI does not activate another user's membership.
 
 ## Authorization model
 
