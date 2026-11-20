@@ -536,7 +536,7 @@ async function loadSectionData() {
           ? rows(supabase.from("fee_payments").select("id,tenant_id,school_id,fee_account_id,installment_id,receipt_number,amount,currency,payment_method,reference,received_at,notes").in("fee_account_id", accountIds).order("received_at", { ascending: false }))
           : Promise.resolve([]),
         has("fees.manage") || has("fees.read")
-          ? lookupRows("students", "id,student_number,first_name,middle_name,last_name,school_id")
+          ? lookupRows("students", "id,tenant_id,student_number,first_name,middle_name,last_name,school_id")
           : Promise.resolve(linkedStudents),
         has("fees.manage") ? lookupRows("academic_years", "id,tenant_id,name,school_id,is_current,status") : Promise.resolve([]),
       ]);
@@ -548,9 +548,9 @@ async function loadSectionData() {
         lookupRows("classes", "id,name,status,school_id", { classScope: true }),
         lookupRows("subjects", "id,name,code,status,school_id"),
         has("timetable.manage") || has("teachers.read")
-          ? lookupRows("teachers", "id,first_name,last_name,school_id")
+          ? lookupRows("teachers", "id,tenant_id,first_name,last_name,school_id")
           : Promise.resolve([]),
-        lookupRows("academic_years", "id,name,is_current,status,school_id"),
+        lookupRows("academic_years", "id,tenant_id,name,is_current,status,school_id"),
       ]);
       return { entries, classes, subjects, teachers, years, schools: state.access.schools };
     }
@@ -1020,10 +1020,15 @@ async function perform(action) {
       if (!has("assignments.manage")) throw new Error("لا تملك صلاحية إدارة الواجبات.");
       const schoolId = selectedSchoolId(action.formData);
       if (!ctx.tenantId || !schoolId) throw new Error("اختر مدرسة ضمن عضويتك.");
+      const classId = required(action.formData, "class_id");
+      const subjectId = required(action.formData, "subject_id");
+      const classRow = state.data.classes.find((row) => row.id === classId && row.school_id === schoolId);
+      const subjectRow = state.data.subjects.find((row) => row.id === subjectId && row.school_id === schoolId);
+      if (!classRow || !subjectRow) throw new Error("الفصل والمادة يجب أن يكونا تابعين للمدرسة المختارة.");
       const payload = {
         tenant_id: ctx.tenantId, school_id: schoolId,
-        class_id: required(action.formData, "class_id"),
-        subject_id: required(action.formData, "subject_id"),
+        class_id: classRow.id,
+        subject_id: subjectRow.id,
         title: required(action.formData, "title"),
         created_by: state.user.id,
         status: "draft",
@@ -1067,8 +1072,10 @@ async function perform(action) {
       const schoolId = selectedSchoolId(action.formData);
       const classId = required(action.formData, "class_id");
       if (!ctx.tenantId || !schoolId) throw new Error("اختر مدرسة ضمن عضويتك.");
+      const classRow = state.data.classes.find((row) => row.id === classId && row.school_id === schoolId);
+      if (!classRow) throw new Error("الفصل لا ينتمي إلى المدرسة المختارة.");
       const payload = {
-        tenant_id: ctx.tenantId, school_id: schoolId, class_id: classId,
+        tenant_id: ctx.tenantId, school_id: schoolId, class_id: classRow.id,
         session_date: required(action.formData, "session_date"), recorded_by: state.user.id,
       };
       const period = optional(action.formData, "period_number");
@@ -1109,11 +1116,23 @@ async function perform(action) {
       if (!has("grades.manage")) throw new Error("لا تملك صلاحية إدخال الدرجات.");
       const assessment = state.data.assessments.find((item) => item.id === required(action.formData,"assessment_id"));
       if (!assessment) throw new Error("التقييم غير موجود ضمن نطاقك.");
+      const studentId = required(action.formData,"student_id");
+      const student = state.data.students.find((item) => item.id === studentId);
+      if (!student || student.school_id !== assessment.school_id || student.tenant_id !== assessment.tenant_id) {
+        throw new Error("الطالب والتقييم يجب أن يكونا ضمن المدرسة نفسها.");
+      }
+      const enrollment = await rows(supabase.from("student_enrollments").select("id")
+        .eq("tenant_id", assessment.tenant_id)
+        .eq("school_id", assessment.school_id)
+        .eq("class_id", assessment.class_id)
+        .eq("student_id", studentId)
+        .eq("status", "active").limit(1));
+      if (!enrollment.length) throw new Error("الطالب غير مقيد حاليًا في فصل التقييم.");
       const score = Number(required(action.formData,"score"));
       if (!Number.isFinite(score) || score < 0 || score > Number(assessment.max_score)) throw new Error("الدرجة يجب أن تكون بين صفر والدرجة القصوى للتقييم.");
       const payload = {
         tenant_id: assessment.tenant_id, school_id: assessment.school_id,
-        assessment_id: assessment.id, student_id: required(action.formData,"student_id"),
+        assessment_id: assessment.id, student_id: studentId,
         score, entered_by: state.user.id,
       };
       const feedback = optional(action.formData,"feedback");
@@ -1142,6 +1161,9 @@ async function perform(action) {
       if (!CONVERSATION_SCOPES.includes(scope)) throw new Error("نوع المحادثة غير مدعوم.");
       const classId = optional(action.formData,"class_id");
       if (scope === "class" && !classId) throw new Error("اختر الفصل للمحادثة.");
+      if (scope === "class" && !state.data.classes.some((row) => row.id === classId && row.school_id === ctx.schoolId)) {
+        throw new Error("الفصل المختار لا ينتمي إلى المدرسة الحالية.");
+      }
       const payload = {
         tenant_id: ctx.tenantId, school_id: ctx.schoolId,
         scope_type: scope, title: required(action.formData,"title"), created_by: state.user.id,
@@ -1190,6 +1212,233 @@ async function perform(action) {
       if (reference) payload.reference = reference;
       if (notes) payload.notes = notes;
       await mutation(supabase.from("subscription_payments").insert(payload), "تسجيل الدفعة");
+      break;
+    }
+    case "create-fee-plan": {
+      if (!has("fees.manage")) throw new Error("لا تملك صلاحية إدارة خطط الرسوم.");
+      const schoolId = selectedSchoolId(action.formData);
+      if (!ctx.tenantId || !schoolId) throw new Error("اختر مدرسة ضمن عضويتك.");
+      const year = state.data.years.find((row) => row.id === required(action.formData,"academic_year_id"));
+      if (!year || year.tenant_id !== ctx.tenantId || year.school_id !== schoolId) throw new Error("السنة الدراسية لا تنتمي إلى المدرسة المختارة.");
+      const total = Number(required(action.formData,"total_amount"));
+      if (!Number.isFinite(total) || total < 0) throw new Error("إجمالي الخطة يجب أن يكون صفرًا أو أكثر.");
+      const currency = required(action.formData,"currency").toUpperCase();
+      if (!/^[A-Z]{3}$/.test(currency)) throw new Error("أدخل رمز عملة مكوّنًا من ثلاثة أحرف.");
+      await mutation(supabase.from("fee_plans").insert({
+        tenant_id: ctx.tenantId, school_id: schoolId, academic_year_id: year.id,
+        name: required(action.formData,"name"), total_amount: total, currency,
+        is_active: action.formData.get("is_active") === "on",
+      }), "إنشاء خطة الرسوم");
+      break;
+    }
+    case "create-fee-account": {
+      if (!has("fees.manage")) throw new Error("لا تملك صلاحية إنشاء حساب رسوم.");
+      const studentId = required(action.formData,"student_id");
+      const planId = required(action.formData,"fee_plan_id");
+      const student = state.data.students.find((row) => row.id === studentId);
+      const plan = state.data.plans.find((row) => row.id === planId);
+      if (!student || !plan || student.tenant_id !== plan.tenant_id || student.school_id !== plan.school_id) {
+        throw new Error("الطالب وخطة الرسوم يجب أن يكونا في المدرسة نفسها.");
+      }
+      const discount = Number(optional(action.formData,"discount_amount") || "0");
+      if (!Number.isFinite(discount) || discount < 0 || discount > Number(plan.total_amount)) {
+        throw new Error("قيمة الخصم خارج النطاق المسموح.");
+      }
+      await mutation(supabase.from("student_fee_accounts").insert({
+        tenant_id: student.tenant_id, school_id: student.school_id,
+        student_id: student.id, fee_plan_id: plan.id, discount_amount: discount,
+      }), "ربط خطة الرسوم بالطالب");
+      break;
+    }
+    case "create-fee-installment": {
+      if (!has("fees.manage")) throw new Error("لا تملك صلاحية إدارة الأقساط.");
+      const account = state.data.accounts.find((row) => row.id === required(action.formData,"fee_account_id"));
+      if (!account) throw new Error("حساب الرسوم غير متاح.");
+      const sequence = Number(required(action.formData,"sequence_number"));
+      const amount = Number(required(action.formData,"amount"));
+      if (!Number.isInteger(sequence) || sequence < 1 || !Number.isFinite(amount) || amount < 0) {
+        throw new Error("رقم القسط أو قيمته غير صحيحة.");
+      }
+      await mutation(supabase.from("fee_installments").insert({
+        tenant_id: account.tenant_id, school_id: account.school_id, fee_account_id: account.id,
+        sequence_number: sequence, due_on: required(action.formData,"due_on"), amount,
+      }), "إضافة القسط");
+      break;
+    }
+    case "record-fee-payment": {
+      if (!has("fees.payments.record")) throw new Error("لا تملك صلاحية تسجيل دفعات الرسوم.");
+      const account = state.data.accounts.find((row) => row.id === required(action.formData,"fee_account_id"));
+      if (!account) throw new Error("حساب الرسوم غير متاح.");
+      const plan = state.data.plans.find((row) => row.id === account.fee_plan_id);
+      const installments = state.data.installments.filter((row) => row.fee_account_id === account.id);
+      const payments = state.data.payments.filter((row) => row.fee_account_id === account.id);
+      const scheduled = installments.length
+        ? installments.reduce((sum,row) => sum + Number(row.amount),0)
+        : Number(plan?.total_amount ?? 0);
+      const outstanding = Math.max(0,scheduled - Number(account.discount_amount ?? 0) - payments.reduce((sum,row) => sum + Number(row.amount),0));
+      const amount = Number(required(action.formData,"amount"));
+      if (!Number.isFinite(amount) || amount <= 0 || amount > outstanding) throw new Error("المبلغ يتجاوز المتبقي أو غير صحيح.");
+      const payload = {
+        tenant_id: account.tenant_id, school_id: account.school_id, fee_account_id: account.id,
+        receipt_number: required(action.formData,"receipt_number"), amount,
+        currency: plan?.currency || "EGP",
+        payment_method: required(action.formData,"payment_method"),
+        received_by: state.user.id, received_at: new Date().toISOString(),
+      };
+      const reference = optional(action.formData,"reference");
+      const notes = optional(action.formData,"notes");
+      if (reference) payload.reference = reference;
+      if (notes) payload.notes = notes;
+      await mutation(supabase.from("fee_payments").insert(payload), "تسجيل دفعة الرسوم");
+      break;
+    }
+    case "create-timetable-entry": {
+      if (!has("timetable.manage")) throw new Error("لا تملك صلاحية إدارة الجدول.");
+      const schoolId = selectedSchoolId(action.formData);
+      if (!ctx.tenantId || !schoolId) throw new Error("اختر مدرسة ضمن عضويتك.");
+      const findSchoolRow = (rowsList,key) => rowsList.find((row) => row.id === key && row.school_id === schoolId);
+      const academicYear = findSchoolRow(state.data.years, required(action.formData,"academic_year_id"));
+      const classRow = findSchoolRow(state.data.classes, required(action.formData,"class_id"));
+      const subject = findSchoolRow(state.data.subjects, required(action.formData,"subject_id"));
+      const teacher = findSchoolRow(state.data.teachers, required(action.formData,"teacher_id"));
+      if (!academicYear || !classRow || !subject || !teacher) throw new Error("السنة والفصل والمادة والمعلم يجب أن يكونوا ضمن المدرسة المختارة.");
+      const day = Number(required(action.formData,"day_of_week"));
+      const period = Number(required(action.formData,"period_number"));
+      const start = required(action.formData,"starts_at");
+      const end = required(action.formData,"ends_at");
+      if (!Number.isInteger(day) || day < 1 || day > 7 || !Number.isInteger(period) || period < 1 || period > 20 || end <= start) {
+        throw new Error("راجع اليوم ورقم الحصة ووقت البداية والنهاية.");
+      }
+      const payload = {
+        tenant_id: ctx.tenantId, school_id: schoolId,
+        academic_year_id: academicYear.id, class_id: classRow.id,
+        subject_id: subject.id, teacher_id: teacher.id,
+        day_of_week: day, period_number: period, starts_at: start, ends_at: end,
+        status: "draft", created_by: state.user.id,
+      };
+      const room = optional(action.formData,"room_name");
+      if (room) payload.room_name = room;
+      await mutation(supabase.from("timetable_entries").insert(payload), "حفظ الحصة");
+      break;
+    }
+    case "publish-timetable": {
+      if (!has("timetable.manage")) throw new Error("لا تملك صلاحية نشر الجدول.");
+      const { error } = await supabase.from("timetable_entries").update({ status: "published" }).eq("id",action.id);
+      if (error) throw error;
+      break;
+    }
+    case "create-exam": {
+      if (!has("exams.manage")) throw new Error("لا تملك صلاحية إدارة الامتحانات.");
+      const schoolId = selectedSchoolId(action.formData);
+      if (!ctx.tenantId || !schoolId) throw new Error("اختر مدرسة ضمن عضويتك.");
+      const classRow = state.data.classes.find((row) => row.id === required(action.formData,"class_id") && row.school_id === schoolId);
+      const subject = state.data.subjects.find((row) => row.id === required(action.formData,"subject_id") && row.school_id === schoolId);
+      if (!classRow || !subject) throw new Error("الفصل والمادة يجب أن يكونا في المدرسة نفسها.");
+      const type = required(action.formData,"exam_type");
+      if (!["quiz","midterm","final","practical","oral","other"].includes(type)) throw new Error("نوع الامتحان غير صالح.");
+      const duration = Number(required(action.formData,"duration_minutes"));
+      const maxScore = Number(required(action.formData,"max_score"));
+      if (!Number.isInteger(duration) || duration < 5 || duration > 600 || !Number.isFinite(maxScore) || maxScore <= 0) {
+        throw new Error("راجع مدة الامتحان والدرجة القصوى.");
+      }
+      const scheduled = new Date(required(action.formData,"scheduled_at"));
+      if (Number.isNaN(scheduled.valueOf())) throw new Error("موعد الامتحان غير صحيح.");
+      const payload = {
+        tenant_id: ctx.tenantId, school_id: schoolId, class_id: classRow.id, subject_id: subject.id,
+        title: required(action.formData,"title"), exam_type: type,
+        scheduled_at: scheduled.toISOString(), duration_minutes: duration, max_score: maxScore,
+        status: "draft", created_by: state.user.id,
+      };
+      const room = optional(action.formData,"room_name");
+      if (room) payload.room_name = room;
+      await mutation(supabase.from("exam_sessions").insert(payload), "إنشاء الامتحان");
+      break;
+    }
+    case "schedule-exam": {
+      if (!has("exams.manage")) throw new Error("لا تملك صلاحية جدولة الامتحانات.");
+      const { error } = await supabase.from("exam_sessions")
+        .update({ status: "scheduled", published_at: new Date().toISOString() }).eq("id",action.id);
+      if (error) throw error;
+      break;
+    }
+    case "add-exam-candidate": {
+      if (!has("exams.manage")) throw new Error("لا تملك صلاحية إدارة المرشحين.");
+      const exam = state.data.sessions.find((row) => row.id === required(action.formData,"exam_session_id"));
+      const student = state.data.students.find((row) => row.id === required(action.formData,"student_id"));
+      if (!exam || !student || exam.tenant_id !== student.tenant_id || exam.school_id !== student.school_id) {
+        throw new Error("الطالب وجلسة الامتحان يجب أن يكونا في المدرسة نفسها.");
+      }
+      const enrollment = await rows(supabase.from("student_enrollments").select("id")
+        .eq("tenant_id",exam.tenant_id).eq("school_id",exam.school_id)
+        .eq("class_id",exam.class_id).eq("student_id",student.id).eq("status","active").limit(1));
+      if (!enrollment.length) throw new Error("الطالب غير مقيد حاليًا في فصل الامتحان.");
+      const payload = {
+        tenant_id: exam.tenant_id, school_id: exam.school_id,
+        exam_session_id: exam.id, student_id: student.id,
+        seat_number: required(action.formData,"seat_number"),
+      };
+      const committee = optional(action.formData,"committee_name");
+      if (committee) payload.committee_name = committee;
+      await mutation(supabase.from("exam_candidates").insert(payload), "إضافة مرشح للامتحان");
+      break;
+    }
+    case "create-content": {
+      if (!has("content.manage")) throw new Error("لا تملك صلاحية إدارة المحتوى.");
+      const schoolId = selectedSchoolId(action.formData);
+      if (!ctx.tenantId || !schoolId) throw new Error("اختر مدرسة ضمن عضويتك.");
+      const classId = optional(action.formData,"class_id");
+      const subjectId = optional(action.formData,"subject_id");
+      const classRow = classId ? state.data.classes.find((row) => row.id === classId && row.school_id === schoolId) : null;
+      const subject = subjectId ? state.data.subjects.find((row) => row.id === subjectId && row.school_id === schoolId) : null;
+      if (classId && !classRow) throw new Error("الفصل لا ينتمي إلى المدرسة المختارة.");
+      if (subjectId && !subject) throw new Error("المادة لا تنتمي إلى المدرسة المختارة.");
+      const payload = {
+        tenant_id: ctx.tenantId, school_id: schoolId,
+        title: required(action.formData,"title"),
+        resource_type: required(action.formData,"resource_type"),
+        body: required(action.formData,"body"),
+        status: "draft", created_by: state.user.id, updated_by: state.user.id,
+      };
+      const summary = optional(action.formData,"summary");
+      if (summary) payload.summary = summary;
+      if (classRow) payload.class_id = classRow.id;
+      if (subject) payload.subject_id = subject.id;
+      await mutation(supabase.from("content_items").insert(payload), "حفظ المحتوى");
+      break;
+    }
+    case "publish-content": {
+      if (!has("content.manage")) throw new Error("لا تملك صلاحية نشر المحتوى.");
+      const { error } = await supabase.from("content_items").update({
+        status: "published", published_at: new Date().toISOString(), updated_by: state.user.id,
+      }).eq("id",action.id);
+      if (error) throw error;
+      break;
+    }
+    case "create-support-ticket": {
+      if (!(has("support.create") || has("support.manage"))) throw new Error("لا تملك صلاحية إنشاء طلب دعم.");
+      if (!ctx.tenantId) throw new Error("اختر سياق مؤسسة لفتح طلب الدعم.");
+      const schoolId = selectedSchoolId(action.formData);
+      if (!schoolId) throw new Error("اختر المدرسة المرتبطة بطلب الدعم.");
+      const payload = {
+        tenant_id: ctx.tenantId, school_id: schoolId,
+        created_by: state.user.id, created_for_user_id: state.user.id,
+        title: required(action.formData,"title"),
+        category: required(action.formData,"category"),
+        description: required(action.formData,"description"),
+        priority: required(action.formData,"priority"),
+        status: "open", source: "web",
+      };
+      await mutation(supabase.from("support_tickets").insert(payload), "إرسال طلب الدعم");
+      break;
+    }
+    case "resolve-ticket": {
+      if (!has("support.manage")) throw new Error("لا تملك صلاحية إدارة طلبات الدعم.");
+      const ticket = state.data.rows.find((row) => row.id === action.id);
+      if (!ticket) throw new Error("طلب الدعم غير متاح.");
+      const { error } = await supabase.from("support_tickets").update({
+        status: "resolved", resolved_at: new Date().toISOString(), resolved_by: state.user.id,
+      }).eq("id",ticket.id);
+      if (error) throw error;
       break;
     }
     case "save-profile": {
