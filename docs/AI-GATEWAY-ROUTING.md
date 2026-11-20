@@ -18,6 +18,7 @@ Configure these in Supabase Edge Function Secrets (project-level):
 - `OPENROUTER_API_KEY` — used only by the Gateway for OpenRouter routes.
 - `GEMINI_API_KEY` — used only by the Gateway for Gemini routes.
 - `AI_GATEWAY_INTERNAL_TOKEN` — a random secret of at least 32 characters. The Worker sends it only in the server-to-server `x-gateway-token` header; the Gateway compares it in constant time.
+- `AI_WORKER_INTERNAL_TOKEN` — a separate random secret of at least 32 characters. Required by the Worker to authenticate its own internal/scheduler trigger requests. Do not reuse the Gateway token.
 
 The existing Supabase service-role credential is used only by the Worker to call the protected Edge Function. Never put it in the browser or commit it to Git.
 
