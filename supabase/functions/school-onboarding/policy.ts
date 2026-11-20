@@ -197,11 +197,11 @@ export function validateRosterPayload(
     }
   }
 
-  if (role === "teacher" && classIds.length === 0) {
-    throw new Error("TEACHER_REQUIRES_CLASS_ASSIGNMENT");
+  if ((role === "teacher" || role === "student") && classIds.length === 0) {
+    throw new Error(role === "teacher" ? "TEACHER_REQUIRES_CLASS_ASSIGNMENT" : "STUDENT_REQUIRES_CLASS_ENROLLMENT");
   }
-  if (role !== "teacher" && classIds.length > 0) {
-    throw new Error("CLASS_ASSIGNMENTS_ONLY_ALLOWED_FOR_TEACHERS");
+  if (role !== "teacher" && role !== "student" && classIds.length > 0) {
+    throw new Error("CLASS_ASSIGNMENTS_ONLY_ALLOWED_FOR_TEACHERS_AND_STUDENTS");
   }
 
   if (role === "parent" && studentIds.length === 0) {
