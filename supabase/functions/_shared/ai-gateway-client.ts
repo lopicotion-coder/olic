@@ -181,6 +181,14 @@ export function parseAiGatewayEmbeddingResponse(
   if (!Array.isArray(body.data) || body.data.length < 1 || body.data.length > 64) {
     throw new Error("AI_GATEWAY_EMBEDDING_BATCH_INVALID");
   }
+  const expectedIndexes = new Set<number>();
+  for (const item of body.data) {
+    if (!Number.isInteger(item.index) || Number(item.index) < 0 || Number(item.index) >= body.data.length ||
+        expectedIndexes.has(Number(item.index))) {
+      throw new Error("AI_GATEWAY_EMBEDDING_INDEX_INVALID");
+    }
+    expectedIndexes.add(Number(item.index));
+  }
   const sorted = [...body.data].sort((a, b) => Number(a.index) - Number(b.index));
   const vectors = sorted.map((item) => {
     if (!Array.isArray(item.embedding) || item.embedding.length !== 1536 ||
