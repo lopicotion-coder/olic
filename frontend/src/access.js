@@ -101,6 +101,7 @@ export function visibleSections(context) {
   if (allow(["support.read", "support.create", "support.manage"])) sections.push("support");
   if (allow(["conversations.read", "conversations.create", "conversations.manage"])) sections.push("messages");
   if (allow(["notifications.read", "notifications.manage"])) sections.push("notifications");
+  if (allow(["fees.read", "fees.manage", "fees.payments.record"]) || ["parent", "student"].includes(context?.roleKey)) sections.push("fees");
   if (allow(["tenant.billing.read", "tenant.billing.manage", "platform.billing.manage"])) sections.push("billing");
   if (allow(["ai.read", "ai.use", "ai.manage"])) sections.push("questions");
 
