@@ -462,22 +462,35 @@ async function loadSectionData() {
     case "tenants":
       return { rows: await rows(supabase.from("tenants").select("id,legal_name,display_name,slug,status,created_at").order("display_name").limit(300)) };
     case "schools": {
-      const schoolRows = await rows(scoped(
-        "schools",
-        "id,tenant_id,name,code,slug,status,default_locale,timezone,created_at",
-        { tenant: true, school: false, order: "name", limit: 300 },
-      ));
-      return { rows: schoolRows };
+      const [schoolRows, tenants] = await Promise.all([
+        rows(scoped(
+          "schools",
+          "id,tenant_id,name,code,slug,status,default_locale,timezone,created_at",
+          { tenant: true, school: false, order: "name", limit: 300 },
+        )),
+        has("platform.schools.manage") ? Promise.resolve(state.access.tenants ?? []) : Promise.resolve([]),
+      ]);
+      return { rows: schoolRows, tenants };
     }
     case "students": {
       let studentRows = [];
       if (ctx.roleKey === "student") studentRows = await fetchMyStudentRecords(supabase, state.user.id);
       else if (ctx.roleKey === "parent") studentRows = await fetchGuardianStudentRecords(supabase, state.user.id);
       else studentRows = await fetchScoped(supabase, "students", "id,tenant_id,school_id,student_number,first_name,middle_name,last_name,date_of_birth,admission_date,status,created_at", ctx, { order: "created_at", limit: 300 });
-      return { rows: studentRows };
+      const classRows = has("students.manage") && (has("classes.read") || has("classes.manage"))
+        ? await fetchScoped(supabase, "classes", "id,tenant_id,school_id,name,academic_year_id,status", ctx, { order: "name", limit: 250 })
+        : [];
+      return { rows: studentRows, classes: classRows };
     }
-    case "teachers":
-      return { rows: await fetchScoped(supabase, "teachers", "id,tenant_id,school_id,employee_number,first_name,last_name,email,phone,status,created_at", ctx, { order: "created_at", limit: 300 }) };
+    case "teachers": {
+      const [teacherRows, classRows] = await Promise.all([
+        fetchScoped(supabase, "teachers", "id,tenant_id,school_id,employee_number,first_name,last_name,email,phone,status,created_at", ctx, { order: "created_at", limit: 300 }),
+        has("teachers.manage") && (has("classes.read") || has("classes.manage"))
+          ? fetchScoped(supabase, "classes", "id,tenant_id,school_id,name,academic_year_id,status", ctx, { order: "name", limit: 250 })
+          : Promise.resolve([]),
+      ]);
+      return { rows: teacherRows, classes: classRows };
+    }
     case "classes": {
       const [classRows, grades, years] = await Promise.all([
         fetchScoped(supabase, "classes", "id,tenant_id,school_id,name,capacity,status,grade_level_id,academic_year_id,campus_id", ctx, { order: "name", limit: 250 }),
@@ -1846,7 +1859,7 @@ root.addEventListener("change", async (event) => {
   const form = event.target.closest("form");
   if (event.target.name === "school_id" && form) {
     const schoolId = event.target.value;
-    for (const dependentName of ["class_id", "subject_id", "teacher_id", "academic_year_id", "fee_plan_id", "student_id"]) {
+    for (const dependentName of ["class_id", "class_ids", "subject_id", "teacher_id", "academic_year_id", "fee_plan_id", "student_id", "student_ids"]) {
       const dependent = form.querySelector(`select[name="${dependentName}"]`);
       if (!dependent) continue;
       const previous = dependent.value;
