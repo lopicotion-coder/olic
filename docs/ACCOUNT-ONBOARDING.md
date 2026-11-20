@@ -55,7 +55,7 @@ Requires the caller's platform-scoped `platform.tenants.manage` permission. The 
     "name": "Example School",
     "slug": "example-school",
     "default_locale": "ar",
-    "timezone": "Africa/Cairo",
+    "timezone": "Africa/Cairo"
   },
   "owner": {
     "email": "school-owner@example.com",
@@ -89,9 +89,8 @@ Requires platform `platform.schools.manage` or tenant-scoped `schools.manage`. T
 Currently supported role keys are `school_admin`, `school_owner`, `supervisor`, `teacher`, `student`, and `parent`. The production role catalog has no `assistant` role; that role cannot be granted until it is deliberately added and permission-reviewed.
 
 Role-specific roster data:
-- `student`: requires `student_number`, `first_name`, and `last_name`; optional `middle_name`, `date_of_birth`, and `admission_date`.
+- `student`: requires `student_number`, `first_name`, `last_name`, and at least one `class_id`; optional `middle_name`, `date_of_birth`, and `admission_date`. Each selected class and its academic year must be active and belong to the same school; the function creates an active `student_enrollments` row using the class's academic year.
 - `teacher`: requires first/last name and at least one valid `class_id`; optional `employee_number` and `phone`. Each assigned class gets a class-scoped teacher role.
-- `student`: requires at least one valid `class_id`. Each selected class is verified in the same school and an active `student_enrollments` record is created using that class's academic year.
 - `parent`: requires first/last name, `relationship`, and one or more `student_ids` belonging to the same tenant and school. The Guardian profile and child links are provisioned together.
 - `school_admin`, `school_owner`, and `supervisor`: require school membership/role but no separate roster row.
 
@@ -112,7 +111,8 @@ The server validates school/class/student ownership before invitation. It does n
 - The caller's permission rows are derived from `membership_roles → roles → role_permissions → permissions`, plus active membership scopes.
 - Tenant and school memberships must be active to grant scoped authority.
 - A school administrator may invite standard roles in their school, but cannot promote another user to `school_admin` or `school_owner`. Those elevated grants require platform authority or tenant-level user-management authority.
-- Teachers must be assigned to real classes in the requested school.
+- Teachers must be assigned to active classes in the requested school and active academic years.
+- Student enrollments are created only in active classes and active academic years.
 - Parent-child links are checked against student records in the same school.
 - Platform role keys are never accepted by the school-member endpoint.
 
