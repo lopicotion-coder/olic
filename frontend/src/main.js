@@ -1108,23 +1108,7 @@ async function perform(action) {
   const ctx = state.context;
   switch (action.type) {
     case "create-school": {
-      if (!(has("platform.schools.manage") || has("schools.manage"))) throw new Error("لا تملك صلاحية إنشاء مدرسة.");
-      const tenantId = ctx.tenantId || required(action.formData,"tenant_id");
-      const tenant = state.access.tenants.find((row) => row.id === tenantId);
-      if (!tenant) throw new Error("المؤسسة المختارة ليست ضمن نطاق الوصول الممنوح لحسابك.");
-      const slug = required(action.formData,"slug").toLowerCase();
-      if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(slug)) {
-        throw new Error("الرابط المختصر يجب أن يكون 3 إلى 63 حرفًا إنجليزيًا صغيرًا أو أرقامًا، ويمكن استخدام الشرطة الوسطية.");
-      }
-      const payload = { tenant_id: tenantId, name: required(action.formData,"name"), slug };
-      for (const field of ["code","default_locale","timezone","education_system","curriculum_board","school_track"]) {
-        const value = optional(action.formData,field);
-        if (value) payload[field] = value;
-      }
-      payload.country_code = required(action.formData,"country_code").toUpperCase();
-      payload.instruction_language_policy = required(action.formData,"instruction_language_policy");
-      await mutation(supabase.from("schools").insert(payload),"إنشاء المدرسة");
-      break;
+      throw new Error("إنشاء المدرسة متوقف حتى تجهيز دعوة مالك المدرسة وتسجيل عضويته ودوره في عملية آمنة واحدة.");
     }
     case "save-school-subject-policy": {
       if (!(has("platform.schools.manage") || has("schools.manage"))) throw new Error("لا تملك صلاحية ضبط لغة المواد.");
@@ -1288,39 +1272,10 @@ async function perform(action) {
       break;
     }
     case "create-student": {
-      if (!has("students.manage")) throw new Error("لا تملك صلاحية إدارة الطلاب.");
-      const schoolId = selectedSchoolId(action.formData);
-      if (!ctx.tenantId || !schoolId) throw new Error("اختر مدرسة ضمن عضويتك.");
-      const payload = {
-        tenant_id: ctx.tenantId, school_id: schoolId,
-        student_number: required(action.formData, "student_number"),
-        first_name: required(action.formData, "first_name"),
-        last_name: required(action.formData, "last_name"),
-      };
-      const middle = optional(action.formData, "middle_name");
-      const dob = optional(action.formData, "date_of_birth");
-      const admission = optional(action.formData, "admission_date");
-      if (middle) payload.middle_name = middle;
-      if (dob) payload.date_of_birth = dob;
-      if (admission) payload.admission_date = admission;
-      await mutation(supabase.from("students").insert(payload), "إضافة الطالب");
-      break;
+      throw new Error("إنشاء حساب الطالب متوقف حتى ربط سجل الطالب بحساب Auth وProfile والعضوية والصلاحية.");
     }
     case "create-teacher": {
-      if (!has("teachers.manage")) throw new Error("لا تملك صلاحية إدارة المعلمين.");
-      const schoolId = selectedSchoolId(action.formData);
-      if (!ctx.tenantId || !schoolId) throw new Error("اختر مدرسة ضمن عضويتك.");
-      const payload = {
-        tenant_id: ctx.tenantId, school_id: schoolId,
-        first_name: required(action.formData, "first_name"),
-        last_name: required(action.formData, "last_name"),
-      };
-      for (const field of ["employee_number","email","phone"]) {
-        const value = optional(action.formData, field);
-        if (value) payload[field] = value;
-      }
-      await mutation(supabase.from("teachers").insert(payload), "إضافة المعلم");
-      break;
+      throw new Error("إنشاء حساب المعلم متوقف حتى ربط حساب Auth وProfile والعضوية وتعيين الفصول.");
     }
     case "create-class": {
       if (!has("classes.manage")) throw new Error("لا تملك صلاحية إدارة الفصول.");
