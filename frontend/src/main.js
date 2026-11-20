@@ -1061,6 +1061,8 @@ function renderTeachers(data) {
 }
 
 function renderClasses(data) {
+  const activeGrades = data.grades.filter((item)=>item.status==="active");
+  const activeYears = data.years.filter((item)=>item.status==="active");
   const gradeMap = new Map(data.grades.map((item) => [item.id,item.name]));
   const yearMap = new Map(data.years.map((item) => [item.id,item.name]));
   const rowsHtml = data.rows.map((row) => `<tr><td><strong>${esc(row.name)}</strong></td><td>${esc(gradeMap.get(row.grade_level_id) || "—")}</td><td>${esc(yearMap.get(row.academic_year_id) || "—")}</td><td>${row.capacity ?? "—"}</td><td>${badge(row.status)}</td></tr>`);
@@ -1110,10 +1112,10 @@ function renderClasses(data) {
     <form class="form-grid compact-form" data-form="create-class">
       ${state.context.schoolId ? "" : `<label class="field"><span>المدرسة</span><select name="school_id" required><option value="">اختر مدرسة مسجلة</option>${schoolOptions()}</select></label>`}
       <label class="field"><span>اسم الفصل</span><input name="name" required maxlength="80"/></label>
-      <label class="field"><span>الصف الدراسي</span><select name="grade_level_id" required><option value="">اختر صفًا مسجلًا</option>${data.grades.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("")}</select></label>
-      <label class="field"><span>السنة الدراسية</span><select name="academic_year_id" required><option value="">اختر سنة مسجلة</option>${data.years.map((item) => `<option value="${esc(item.id)}">${esc(item.name)} ${item.is_current?"(الحالية)":""}</option>`).join("")}</select></label>
+      <label class="field"><span>الصف الدراسي</span><select name="grade_level_id" required><option value="">اختر صفًا مسجلًا</option>${activeGrades.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("")}</select></label>
+      <label class="field"><span>السنة الدراسية</span><select name="academic_year_id" required><option value="">اختر سنة مسجلة</option>${activeYears.map((item) => `<option value="${esc(item.id)}">${esc(item.name)} ${item.is_current?"(الحالية)":""}</option>`).join("")}</select></label>
       <label class="field"><span>السعة</span><input name="capacity" type="number" min="1" max="1000"/></label>
-      <div class="form-actions"><button class="button button-primary" type="submit" ${!data.grades.length || !data.years.length ? "disabled" : ""}>إنشاء فصل</button></div>
+      <div class="form-actions"><button class="button button-primary" type="submit" ${!activeGrades.length || !activeYears.length ? "disabled" : ""}>إنشاء فصل</button></div>
     </form>` : "";
   const setupNotice = canManage && (!data.grades.length || !data.years.length || !data.subjects.length)
     ? `<div class="info-banner">قبل بدء الفصول والواجبات، أنشئ الصفوف والسنوات الدراسية والمواد اللازمة لهذه المدرسة. لا توجد بيانات ابتدائية في Production حاليًا.</div>`
@@ -1823,6 +1825,7 @@ async function perform(action) {
       const grade = (state.data?.grades ?? []).find((item)=>item.id===gradeLevelId && item.school_id===schoolId);
       const year = (state.data?.years ?? []).find((item)=>item.id===academicYearId && item.school_id===schoolId);
       if (!grade || !year) throw new Error("الصف والسنة الدراسية يجب أن يكونا تابعين للمدرسة المختارة.");
+      if (grade.status !== "active") throw new Error("لا يمكن إنشاء فصل على صف دراسي موقوف.");
       if (year.status !== "active") throw new Error("يجب اختيار سنة دراسية نشطة لإنشاء فصل.");
       const payload = {
         tenant_id: ctx.tenantId, school_id: schoolId,
@@ -1831,7 +1834,13 @@ async function perform(action) {
         academic_year_id: year.id,
       };
       const capacity = optional(action.formData, "capacity");
-      if (capacity) payload.capacity = Number(capacity);
+      if (capacity) {
+        const parsedCapacity = Number(capacity);
+        if (!Number.isInteger(parsedCapacity) || parsedCapacity < 1 || parsedCapacity > 1000) {
+          throw new Error("سعة الفصل يجب أن تكون رقمًا صحيحًا بين 1 و1000.");
+        }
+        payload.capacity = parsedCapacity;
+      }
       await mutation(supabase.from("classes").insert(payload), "إنشاء الفصل");
       break;
     }
