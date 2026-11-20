@@ -110,18 +110,11 @@ export async function loadAccessModel(client, user) {
       .filter((ctx) => ["schools.read","schools.manage","students.manage","teachers.manage","classes.manage","attendance.manage","assignments.manage"].some((key) => ctx.permissions.includes(key)))
       .map((ctx) => ctx.tenantId)
       .filter(Boolean))];
-    const queryTenantIds = [...new Set([...schoolIds.length ? tenants.map((row) => row.id) : [], ...manageableTenantIds])];
     if (manageableTenantIds.length) {
       schools = await readRows(
         client.from("schools").select("id,tenant_id,name,slug,status,default_locale,timezone")
           .in("tenant_id", manageableTenantIds).order("name"),
         "Load schools in assigned organizations",
-      );
-    } else if (!schools.length && queryTenantIds.length) {
-      schools = await readRows(
-        client.from("schools").select("id,tenant_id,name,slug,status,default_locale,timezone")
-          .in("id", schoolIds).order("name"),
-        "Load accessible schools",
       );
     }
   }
