@@ -444,8 +444,14 @@ async function loadSectionData() {
     }
     case "tenants":
       return { rows: await rows(supabase.from("tenants").select("id,legal_name,display_name,slug,status,created_at").order("display_name").limit(300)) };
-    case "schools":
-      return { rows: await rows(scoped("schools", "id,tenant_id,name,code,slug,status,default_locale,timezone,created_at", { tenant: true, school: false, order: "name", limit: 300 })) };
+    case "schools": {
+      const [schoolRows, tenants] = await Promise.all([
+        rows(scoped("schools", "id,tenant_id,name,code,slug,status,default_locale,timezone,created_at", { tenant: true, school: false, order: "name", limit: 300 })),
+        has("platform.schools.manage") ? Promise.resolve(state.access.tenants)
+          : Promise.resolve([]),
+      ]);
+      return { rows: schoolRows, tenants };
+    }
     case "students": {
       let studentRows = [];
       if (ctx.roleKey === "student") studentRows = await fetchMyStudentRecords(supabase, state.user.id);
@@ -642,13 +648,29 @@ function renderOverview(data) {
 
 function renderTenants(data) {
   const rowsHtml = data.rows.map((row) => `<tr><td><strong>${esc(row.display_name)}</strong><small>${esc(row.legal_name)}</small></td><td>${esc(row.slug)}</td><td>${badge(row.status)}</td><td>${dateText(row.created_at)}</td></tr>`);
+  const onboardingNotice = has("platform.tenants.manage")
+    ? `<div class="info-banner">إنشاء مؤسسة جديدة متوقف من الواجهة؛ قاعدة الإنتاج لا توفر حتى الآن عملية onboarding ذرّية لإنشاء المؤسسة ودعوة مالكها ومنحه العضوية والدور. لن ننشئ مؤسسة يتيمة بلا مسؤول وصول.</div>`
+    : "";
   return sectionHead("المؤسسات", "المؤسسات التي تسمح عضويتك وصلاحيات المنصة بالوصول إليها.")
+    + onboardingNotice
     + table(["اسم المؤسسة","المعرّف","الحالة","تاريخ الإنشاء"], rowsHtml, "لا توجد مؤسسات متاحة لهذا الحساب.");
 }
 
 function renderSchools(data) {
   const rowsHtml = data.rows.map((row) => `<tr><td><strong>${esc(row.name)}</strong><small>${esc(row.code)}</small></td><td>${esc(row.slug)}</td><td>${badge(row.status)}</td><td>${esc(row.default_locale)}</td><td>${esc(row.timezone)}</td></tr>`);
-  return sectionHead("المدارس", "المدارس المتاحة ضمن نطاق العضوية والصلاحيات الحالية.")
+  const canManage = has("platform.schools.manage") || has("schools.manage");
+  const form = canManage ? `
+    <form class="form-grid compact-form" data-form="create-school">
+      ${state.context.tenantId ? "" : `<label class="field"><span>المؤسسة</span><select name="tenant_id" required><option value="">اختر المؤسسة</option>${(data.tenants??[]).map((tenant)=>`<option value="${esc(tenant.id)}">${esc(tenant.display_name)}</option>`).join("")}</select></label>`}
+      <label class="field"><span>اسم المدرسة</span><input name="name" required maxlength="180"/></label>
+      <label class="field"><span>الرابط المختصر</span><input name="slug" required minlength="3" maxlength="63" pattern="[a-z0-9][a-z0-9-]{1,61}[a-z0-9]" placeholder="school-name" dir="ltr"/></label>
+      <label class="field"><span>الكود (اختياري)</span><input name="code" maxlength="40"/></label>
+      <label class="field"><span>اللغة الافتراضية (اختياري)</span><select name="default_locale"><option value="">استخدم الافتراضي</option><option value="ar">العربية</option><option value="en">English</option></select></label>
+      <label class="field"><span>المنطقة الزمنية (اختياري)</span><input name="timezone" maxlength="80" placeholder="Africa/Cairo" dir="ltr"/></label>
+      <div class="form-actions"><button class="button button-primary" type="submit" ${!state.context.tenantId && !(data.tenants??[]).length ? "disabled" : ""}>إنشاء مدرسة</button></div>
+    </form>` : "";
+  return sectionHead("المدارس", "المدارس المتاحة ضمن نطاق العضوية والصلاحيات الحالية.", canManage ? `<button class="button button-secondary" data-action="toggle-form" data-target="school-create-form">إضافة مدرسة</button>` : "")
+    + (canManage ? `<section id="school-create-form" class="panel form-panel hidden">${form}</section>` : "")
     + table(["المدرسة","الرابط المختصر","الحالة","اللغة","المنطقة الزمنية"], rowsHtml, "لا توجد مدارس متاحة لهذا الحساب.");
 }
 
@@ -1001,6 +1023,23 @@ async function forgotPassword() {
 async function perform(action) {
   const ctx = state.context;
   switch (action.type) {
+    case "create-school": {
+      if (!(has("platform.schools.manage") || has("schools.manage"))) throw new Error("لا تملك صلاحية إنشاء مدرسة.");
+      const tenantId = ctx.tenantId || required(action.formData,"tenant_id");
+      const tenant = state.access.tenants.find((row) => row.id === tenantId);
+      if (!tenant) throw new Error("المؤسسة المختارة ليست ضمن نطاق الوصول الممنوح لحسابك.");
+      const slug = required(action.formData,"slug").toLowerCase();
+      if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(slug)) {
+        throw new Error("الرابط المختصر يجب أن يكون 3 إلى 63 حرفًا إنجليزيًا صغيرًا أو أرقامًا، ويمكن استخدام الشرطة الوسطية.");
+      }
+      const payload = { tenant_id: tenantId, name: required(action.formData,"name"), slug };
+      for (const field of ["code","default_locale","timezone"]) {
+        const value = optional(action.formData,field);
+        if (value) payload[field] = value;
+      }
+      await mutation(supabase.from("schools").insert(payload),"إنشاء المدرسة");
+      break;
+    }
     case "create-student": {
       if (!has("students.manage")) throw new Error("لا تملك صلاحية إدارة الطلاب.");
       const schoolId = selectedSchoolId(action.formData);
@@ -1660,7 +1699,8 @@ root.addEventListener("submit", async (event) => {
   try {
     await perform({ type, formData: new FormData(form) });
     showToast("تم حفظ التغيير في قاعدة البيانات.");
-    await loadSection();
+    if (type === "create-school") await refreshAccess();
+    else await loadSection();
   } catch (error) {
     console.error("My School form action failed", error);
     showToast(error.message || "تعذّر حفظ التغيير. راجع صلاحيات الحساب.", "error");
