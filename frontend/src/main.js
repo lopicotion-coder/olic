@@ -17,6 +17,7 @@ import {
 } from "./sections.js";
 import { renderKnowledgeConsole, renderLearningDashboard } from "./knowledge.js";
 import { acceptPendingMemberships } from "./membership-acceptance.js";
+import { isInvitationCallback, isPendingInvitationUser } from "./invitation-flow.js";
 
 const root = document.querySelector("#app");
 const STORAGE_CONTEXT_KEY = "my-school:last-context";
@@ -87,12 +88,10 @@ const ATTENDANCE_VALUES = ["present", "absent", "late", "excused"];
 const CONVERSATION_SCOPES = ["school", "class"];
 const CURRENCY = "EGP";
 
-const invitationCallbackDetected = (() => {
-  const query = new URLSearchParams(window.location.search);
-  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-  return query.get("invite") === "1" &&
-    (hash.get("type") === "invite" || hash.has("access_token") || query.has("code"));
-})();
+const invitationCallbackDetected = isInvitationCallback(
+  window.location.search,
+  window.location.hash,
+);
 
 const state = {
   inviteMode: invitationCallbackDetected,
@@ -1186,7 +1185,7 @@ async function handleSession(session) {
   state.session = session;
   state.user = session?.user ?? null;
   state.authError = "";
-  if (session?.user?.user_metadata?.myschool_invite === true) {
+  if (isPendingInvitationUser(session?.user)) {
     state.inviteMode = true;
     state.inviteChecking = false;
   }
