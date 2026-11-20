@@ -362,6 +362,7 @@ async function lookupRows(tableName, columns, options = {}) {
   let query = supabase.from(tableName).select(columns);
   if (state.context?.tenantId && options.tenant !== false) query = query.eq("tenant_id", state.context.tenantId);
   if (state.context?.schoolId && options.school !== false) query = query.eq("school_id", state.context.schoolId);
+  if (options.classScope && state.context?.classId && tableName === "classes") query = query.eq("id", state.context.classId);
   if (options.order) query = query.order(options.order, { ascending: true });
   return rows(query.limit(options.limit ?? 250));
 }
@@ -411,7 +412,7 @@ async function loadSectionData() {
     case "attendance": {
       const [sessions, classRows] = await Promise.all([
         fetchScoped(supabase, "attendance_sessions", "id,tenant_id,school_id,class_id,subject_id,session_date,period_number,notes,finalized_at,created_at", ctx, { classScope: true, order: "session_date", limit: 200 }),
-        lookupRows("classes", "id,name,status"),
+        lookupRows("classes", "id,name,status,school_id", { classScope: true }),
       ]);
       let roster = [];
       let existingRecords = [];
@@ -437,8 +438,8 @@ async function loadSectionData() {
     case "assignments": {
       const [assignments, classRows, subjects, submissions] = await Promise.all([
         fetchScoped(supabase, "assignments", "id,tenant_id,school_id,class_id,subject_id,title,instructions,status,due_at,max_score,allow_late_submission,published_at,created_at", ctx, { classScope: true, order: "created_at", limit: 200 }),
-        lookupRows("classes", "id,name,status"),
-        lookupRows("subjects", "id,name,code,status"),
+        lookupRows("classes", "id,name,status,school_id", { classScope: true }),
+        lookupRows("subjects", "id,name,code,status,school_id"),
         fetchScoped(supabase, "assignment_submissions", "id,assignment_id,student_id,submission_text,status,submitted_at,score,feedback,graded_at", ctx, { limit: 500 }),
       ]);
       const ownStudents = ctx.roleKey === "student" ? await fetchMyStudentRecords(supabase, state.user.id) : [];
@@ -449,7 +450,7 @@ async function loadSectionData() {
         fetchScoped(supabase, "assessments", "id,tenant_id,school_id,class_id,subject_id,title,assessment_type,max_score,weight,assessment_date,is_published", ctx, { classScope: true, order: "assessment_date", limit: 250 }),
         fetchScoped(supabase, "grades", "id,assessment_id,student_id,score,feedback,published_at,created_at", ctx, { limit: 500 }),
         ctx.roleKey === "student" ? fetchMyStudentRecords(supabase, state.user.id) : has("students.read")
-          ? fetchScoped(supabase, "students", "id,student_number,first_name,middle_name,last_name", ctx, { limit: 500 })
+          ? fetchScoped(supabase, "students", "id,tenant_id,school_id,student_number,first_name,middle_name,last_name", ctx, { limit: 500 })
           : Promise.resolve([]),
       ]);
       return { assessments, rows: gradeRows, students: studentRows };
@@ -590,7 +591,7 @@ function renderAttendance(data) {
   const createForm = canManage ? `
     <form class="form-grid compact-form" data-form="create-attendance">
       ${state.context.schoolId ? "" : `<label class="field"><span>المدرسة</span><select name="school_id" required><option value="">اختر مدرسة مسجلة</option>${schoolOptions()}</select></label>`}
-      <label class="field"><span>الفصل</span><select name="class_id" required><option value="">اختر فصلًا</option>${data.classes.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("")}</select></label>
+      <label class="field"><span>الفصل</span><select name="class_id" required><option value="">اختر فصلًا</option>${data.classes.map((item) => `<option value="${esc(item.id)}" data-school-id="${esc(item.school_id)}">${esc(item.name)}</option>`).join("")}</select></label>
       <label class="field"><span>التاريخ</span><input name="session_date" type="date" required value="${new Date().toISOString().slice(0,10)}"/></label>
       <label class="field"><span>رقم الحصة</span><input name="period_number" type="number" min="1" max="20"/></label>
       <label class="field"><span>ملاحظات</span><input name="notes" maxlength="500"/></label>
@@ -635,8 +636,8 @@ function renderAssignments(data) {
   const createForm = canManage ? `
     <form class="form-grid compact-form" data-form="create-assignment">
       ${state.context.schoolId ? "" : `<label class="field"><span>المدرسة</span><select name="school_id" required><option value="">اختر مدرسة</option>${schoolOptions()}</select></label>`}
-      <label class="field"><span>الفصل</span><select name="class_id" required><option value="">اختر فصلًا</option>${data.classes.map((row) => `<option value="${esc(row.id)}">${esc(row.name)}</option>`).join("")}</select></label>
-      <label class="field"><span>المادة</span><select name="subject_id" required><option value="">اختر مادة</option>${data.subjects.map((row) => `<option value="${esc(row.id)}">${esc(row.name)}</option>`).join("")}</select></label>
+      <label class="field"><span>الفصل</span><select name="class_id" required><option value="">اختر فصلًا</option>${data.classes.map((row) => `<option value="${esc(row.id)}" data-school-id="${esc(row.school_id)}">${esc(row.name)}</option>`).join("")}</select></label>
+      <label class="field"><span>المادة</span><select name="subject_id" required><option value="">اختر مادة</option>${data.subjects.map((row) => `<option value="${esc(row.id)}" data-school-id="${esc(row.school_id)}">${esc(row.name)}</option>`).join("")}</select></label>
       <label class="field"><span>عنوان الواجب</span><input name="title" required maxlength="180"/></label>
       <label class="field"><span>موعد التسليم</span><input name="due_at" type="datetime-local"/></label>
       <label class="field"><span>الدرجة القصوى</span><input name="max_score" type="number" min="0" step="0.01"/></label>
@@ -663,8 +664,8 @@ function renderGrades(data) {
   const canManage = has("grades.manage") && state.context.tenantId;
   const createForm = canManage ? `
     <form class="form-grid compact-form" data-form="create-grade">
-      <label class="field"><span>التقييم</span><select name="assessment_id" required><option value="">اختر تقييمًا</option>${data.assessments.map((row) => `<option value="${esc(row.id)}">${esc(row.title)} — ${esc(row.max_score)}</option>`).join("")}</select></label>
-      <label class="field"><span>الطالب</span><select name="student_id" required><option value="">اختر طالبًا</option>${data.students.map((row) => `<option value="${esc(row.id)}">${esc([row.first_name,row.middle_name,row.last_name].filter(Boolean).join(" "))}</option>`).join("")}</select></label>
+      <label class="field"><span>التقييم</span><select name="assessment_id" required><option value="">اختر تقييمًا</option>${data.assessments.map((row) => `<option value="${esc(row.id)}" data-school-id="${esc(row.school_id)}">${esc(row.title)} — ${esc(row.max_score)}</option>`).join("")}</select></label>
+      <label class="field"><span>الطالب</span><select name="student_id" required><option value="">اختر طالبًا</option>${data.students.map((row) => `<option value="${esc(row.id)}" data-school-id="${esc(row.school_id)}">${esc([row.first_name,row.middle_name,row.last_name].filter(Boolean).join(" "))}</option>`).join("")}</select></label>
       <label class="field"><span>الدرجة</span><input type="number" name="score" min="0" step="0.01" required/></label>
       <label class="field field-wide"><span>تعليق</span><textarea name="feedback" rows="2" maxlength="2000"></textarea></label>
       <div class="form-actions"><button class="button button-primary" type="submit" ${!data.assessments.length || !data.students.length ? "disabled" : ""}>حفظ الدرجة</button></div>
@@ -1162,6 +1163,8 @@ root.addEventListener("click", async (event) => {
       await loadSection();
     } else if (type === "toggle-sidebar") {
       document.querySelector("#sidebar")?.classList.toggle("sidebar-open");
+    } else if (type === "retry-access") {
+      await refreshAccess();
     }
   } catch (error) {
     console.error("My School action failed", error);
@@ -1175,6 +1178,39 @@ root.addEventListener("change", async (event) => {
     if (context) {
       await applyContext(context);
       showToast("تم تغيير مساحة العمل وفق العضوية المختارة.");
+    }
+    return;
+  }
+
+  const form = event.target.closest("form");
+  if (event.target.name === "school_id" && form) {
+    const schoolId = event.target.value;
+    for (const dependentName of ["class_id", "subject_id"]) {
+      const dependent = form.querySelector(`select[name="${dependentName}"]`);
+      if (!dependent) continue;
+      const previous = dependent.value;
+      for (const option of dependent.options) {
+        if (!option.value) continue;
+        const belongs = option.dataset.schoolId === schoolId;
+        option.hidden = Boolean(schoolId && !belongs);
+        option.disabled = Boolean(schoolId && !belongs);
+      }
+      if (previous && dependent.selectedOptions[0]?.disabled) dependent.value = "";
+    }
+  }
+
+  if (event.target.name === "assessment_id" && form) {
+    const selected = event.target.selectedOptions[0];
+    const schoolId = selected?.dataset.schoolId || "";
+    const studentSelect = form.querySelector('select[name="student_id"]');
+    if (studentSelect && schoolId) {
+      for (const option of studentSelect.options) {
+        if (!option.value) continue;
+        const belongs = option.dataset.schoolId === schoolId;
+        option.hidden = !belongs;
+        option.disabled = !belongs;
+      }
+      if (studentSelect.selectedOptions[0]?.disabled) studentSelect.value = "";
     }
   }
 });
