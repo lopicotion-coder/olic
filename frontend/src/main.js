@@ -47,6 +47,11 @@ const NAV_LABELS = {
   notifications: "الإشعارات",
   billing: "الاشتراكات والفواتير",
   questions: "بنك الأسئلة",
+  fees: "الرسوم والمدفوعات",
+  timetable: "الجدول الدراسي",
+  exams: "الامتحانات",
+  content: "المحتوى التعليمي",
+  support: "الدعم الفني",
   profile: "حسابي",
 };
 const NAV_ICONS = {
@@ -319,6 +324,11 @@ function renderSection() {
     case "messages": return renderMessages(data);
     case "notifications": return renderNotifications(data);
     case "billing": return renderBilling(data);
+    case "fees": return renderFees(data);
+    case "timetable": return renderTimetable(data);
+    case "exams": return renderExams(data);
+    case "content": return renderContent(data);
+    case "support": return renderSupport(data);
     case "questions": return renderQuestions(data);
     case "profile": return renderProfile(data);
     default: return emptyState("هذا القسم غير متاح في السياق الحالي.");
@@ -478,6 +488,69 @@ async function loadSectionData() {
       if (has("platform.billing.manage")) plans = await rows(supabase.from("subscription_plans").select("id,code,display_name,billing_cycle,base_price,currency,status").order("display_name"));
       return { subscriptions, invoices, payments, plans };
     }
+    case "fees": {
+      let linkedStudents = [];
+      if (ctx.roleKey === "student") linkedStudents = await fetchMyStudentRecords(supabase, state.user.id);
+      else if (ctx.roleKey === "parent") linkedStudents = await fetchGuardianStudentRecords(supabase, state.user.id);
+
+      let accounts = [];
+      if (["student","parent"].includes(ctx.roleKey)) {
+        const ids = [...new Set(linkedStudents.map((row) => row.id))];
+        accounts = ids.length
+          ? await rows(supabase.from("student_fee_accounts")
+              .select("id,tenant_id,school_id,student_id,fee_plan_id,discount_amount,created_at")
+              .in("student_id", ids).order("created_at", { ascending: false }))
+          : [];
+      } else {
+        accounts = await fetchScoped(supabase, "student_fee_accounts", "id,tenant_id,school_id,student_id,fee_plan_id,discount_amount,created_at", ctx, { order: "created_at", limit: 300 });
+      }
+
+      const accountIds = accounts.map((row) => row.id);
+      const feePlanIds = [...new Set(accounts.map((row) => row.fee_plan_id))];
+      const [plans, installments, payments, students, years] = await Promise.all([
+        has("fees.manage") || has("fees.read")
+          ? lookupRows("fee_plans", "id,tenant_id,school_id,academic_year_id,name,currency,total_amount,is_active")
+          : feePlanIds.length
+            ? rows(supabase.from("fee_plans").select("id,name,currency,total_amount,is_active").in("id", feePlanIds))
+            : Promise.resolve([]),
+        accountIds.length
+          ? rows(supabase.from("fee_installments").select("id,tenant_id,school_id,fee_account_id,sequence_number,due_on,amount").in("fee_account_id", accountIds).order("due_on"))
+          : Promise.resolve([]),
+        accountIds.length
+          ? rows(supabase.from("fee_payments").select("id,tenant_id,school_id,fee_account_id,installment_id,receipt_number,amount,currency,payment_method,reference,received_at,notes").in("fee_account_id", accountIds).order("received_at", { ascending: false }))
+          : Promise.resolve([]),
+        has("fees.manage") || has("fees.read")
+          ? lookupRows("students", "id,student_number,first_name,middle_name,last_name,school_id")
+          : Promise.resolve(linkedStudents),
+        has("fees.manage") ? lookupRows("academic_years", "id,name,school_id,is_current,status") : Promise.resolve([]),
+      ]);
+      return { accounts, plans, installments, payments, students, years };
+    }
+    case "timetable": {
+      const [entries, classes, subjects, teachers, years] = await Promise.all([
+        fetchScoped(supabase, "timetable_entries", "id,tenant_id,school_id,academic_year_id,class_id,subject_id,teacher_id,day_of_week,period_number,starts_at,ends_at,room_name,status,published_at", ctx, { classScope: true, order: "day_of_week", limit: 1000 }),
+        lookupRows("classes", "id,name,status,school_id", { classScope: true }),
+        lookupRows("subjects", "id,name,code,status,school_id"),
+        has("timetable.manage") || has("teachers.read")
+          ? lookupRows("teachers", "id,first_name,last_name,school_id")
+          : Promise.resolve([]),
+        lookupRows("academic_years", "id,name,is_current,status,school_id"),
+      ]);
+      return { entries, classes, subjects, teachers, years };
+    }
+    case "exams": {
+      const [sessions, classes, subjects, candidates] = await Promise.all([
+        fetchScoped(supabase, "exam_sessions", "id,tenant_id,school_id,class_id,subject_id,term_id,title,exam_type,scheduled_at,duration_minutes,room_name,max_score,status,published_at", ctx, { classScope: true, order: "scheduled_at", limit: 300 }),
+        lookupRows("classes", "id,name,status,school_id", { classScope: true }),
+        lookupRows("subjects", "id,name,code,status,school_id"),
+        fetchScoped(supabase, "exam_candidates", "id,exam_session_id,student_id,seat_number,committee_name", ctx, { limit: 1000 }),
+      ]);
+      return { sessions, classes, subjects, candidates };
+    }
+    case "content":
+      return { rows: await fetchScoped(supabase, "content_items", "id,tenant_id,school_id,class_id,subject_id,title,summary,body,resource_type,status,published_at,created_by,created_at,updated_at", ctx, { classScope: true, order: "created_at", limit: 300 }) };
+    case "support":
+      return { rows: await fetchScoped(supabase, "support_tickets", "id,tenant_id,school_id,created_by,created_for_user_id,assigned_to_user_id,title,description,category,status,priority,source,resolved_at,closed_at,created_at,updated_at,closure_reason", ctx, { tenant: true, school: true, order: "created_at", limit: 300 }) };
     case "questions":
       return { rows: await fetchScoped(supabase, "question_bank", "id,sharing_scope,tenant_id,school_id,subject_code,subject_name,grade_code,grade_label,unit_title,lesson_title,question_type,question_text,choices,language_code,difficulty,review_status,record_status,origin_type,approved_at,created_at", ctx, { tenant: true, school: true, order: "created_at", limit: 250 }) };
     case "profile": {
