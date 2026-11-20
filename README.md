@@ -61,4 +61,4 @@ Cloudflare R2 is not enabled on the connected account yet. Enable R2, create a p
 
 ## Deployment status
 
-No Vercel or Cloudflare deployment is currently linked to this repository. Vercel currently has a Git-linked project for `selsep-edu`, which is a separate product. See `docs/DEPLOYMENT.md`.
+A Vercel project named `myschool` is linked to this repository, but its observed READY deployment was built from the older `main` commit without running the Vite frontend build. The intended Vite/Supabase app exists on `feature/platform-expansion-plan` only and is not a production release. Do not treat the current Vercel URL as a working student application. See `docs/DEPLOYMENT.md`.
