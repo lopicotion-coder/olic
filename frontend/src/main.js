@@ -106,6 +106,7 @@ const state = {
   pageError: "",
   locale: "ar",
   selectedConversationId: "",
+  selectedContentId: "",
   selectedAttendanceSessionId: "",
   search: "",
   authMessage: "",
@@ -676,12 +677,15 @@ async function loadSectionData() {
       return { sessions, classes, subjects, candidates, students, schools: state.access.schools };
     }
     case "content": {
-      const [contentRows, classes, subjects] = await Promise.all([
+      const canManage = has("content.manage");
+      const [rawContentRows, classes, subjects] = await Promise.all([
         fetchScoped(supabase, "content_items", "id,tenant_id,school_id,class_id,subject_id,title,summary,body,resource_type,status,published_at,created_by,created_at,updated_at", ctx, { classScope: true, order: "created_at", limit: 300 }),
-        has("content.manage") ? lookupRows("classes", "id,name,status,school_id", { classScope: true }) : Promise.resolve([]),
-        has("content.manage") ? lookupRows("subjects", "id,name,code,status,school_id") : Promise.resolve([]),
+        canManage ? lookupRows("classes", "id,name,status,school_id", { classScope: true }) : Promise.resolve([]),
+        canManage ? lookupRows("subjects", "id,name,code,status,school_id") : Promise.resolve([]),
       ]);
-      return { rows: contentRows, classes, subjects, schools: state.access.schools };
+      const contentRows = canManage ? rawContentRows : rawContentRows.filter((item) => item.status === "published");
+      const selectedContent = contentRows.find((item) => item.id === state.selectedContentId) ?? null;
+      return { rows: contentRows, selectedContent, classes, subjects, schools: state.access.schools };
     }
     case "support":
       return { rows: await fetchScoped(supabase, "support_tickets", "id,tenant_id,school_id,created_by,created_for_user_id,assigned_to_user_id,title,description,category,status,priority,source,resolved_at,closed_at,created_at,updated_at,closure_reason", ctx, { tenant: true, school: true, order: "created_at", limit: 300 }), schools: state.access.schools };
@@ -2043,6 +2047,12 @@ root.addEventListener("click", async (event) => {
       target?.classList.toggle("hidden");
     } else if (type === "open-conversation") {
       state.selectedConversationId = button.dataset.id;
+      await loadSection();
+    } else if (type === "open-content") {
+      state.selectedContentId = button.dataset.id;
+      await loadSection();
+    } else if (type === "close-content") {
+      state.selectedContentId = "";
       await loadSection();
     } else if (type === "open-attendance") {
       state.selectedAttendanceSessionId = button.dataset.id;
