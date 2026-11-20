@@ -156,8 +156,8 @@ export function renderTimetable(data, context, permissions) {
 export function renderExams(data, context, permissions) {
   const classMap=new Map(data.classes.map((x)=>[x.id,x.name]));
   const subjectMap=new Map(data.subjects.map((x)=>[x.id,x.name]));
-  const candidates=data.candidates;
-  const rows=data.sessions.map((exam)=>\`<tr><td><strong>\${esc(exam.title)}</strong><small>\${esc(exam.exam_type)}</small></td><td>\${esc(classMap.get(exam.class_id)??exam.class_id)}</td><td>\${esc(subjectMap.get(exam.subject_id)??exam.subject_id)}</td><td>\${dateText(exam.scheduled_at)}</td><td>\${exam.duration_minutes} دقيقة</td><td>\${money(exam.max_score)}</td><td>\${badge(exam.status)}</td><td>\${candidates.filter((c)=>c.exam_session_id===exam.id).length}</td><td>\${permissions.has("exams.manage")&&exam.status==="draft"?\`<button class="button button-small button-secondary" data-action="schedule-exam" data-id="\${esc(exam.id)}">جدولة</button>\`:""}</td></tr>\`);
+  const students=new Map(data.students.map((x)=>[x.id,x]));
+  const rows=data.sessions.map((exam)=>\`<tr><td><strong>\${esc(exam.title)}</strong><small>\${esc(exam.exam_type)}</small></td><td>\${esc(classMap.get(exam.class_id)??exam.class_id)}</td><td>\${esc(subjectMap.get(exam.subject_id)??exam.subject_id)}</td><td>\${dateText(exam.scheduled_at)}</td><td>\${exam.duration_minutes} دقيقة</td><td>\${money(exam.max_score)}</td><td>\${badge(exam.status)}</td><td>\${data.candidates.filter((x)=>x.exam_session_id===exam.id).length}</td><td>\${permissions.has("exams.manage")&&exam.status==="draft"?\`<button class="button button-small button-secondary" data-action="schedule-exam" data-id="\${esc(exam.id)}">جدولة</button>\`:""}</td></tr>\`);
   const form=permissions.has("exams.manage")?\`
     <form class="form-grid compact-form" data-form="create-exam">
       \${schoolField(context,data.schools)}
@@ -171,10 +171,23 @@ export function renderExams(data, context, permissions) {
       <label class="field"><span>القاعة</span><input name="room_name" maxlength="80"/></label>
       <div class="form-actions"><button class="button button-primary" type="submit" \${!data.classes.length||!data.subjects.length?"disabled":""}>حفظ كمسودة</button></div>
     </form>\`:"";
-  return heading("الامتحانات","جلسات الامتحانات ومواعيدها والمرشحون المسجلون.",permissions.has("exams.manage")?\`<button class="button button-secondary" data-action="toggle-form" data-target="exam-create-form">إنشاء امتحان</button>\`:"")
+  const candidateForm=permissions.has("exams.manage")?\`
+    <form class="form-grid compact-form" data-form="add-exam-candidate">
+      <label class="field"><span>جلسة الامتحان</span><select name="exam_session_id" required><option value="">اختر جلسة</option>\${data.sessions.map((x)=>\`<option value="\${esc(x.id)}" data-school-id="\${esc(x.school_id)}">\${esc(x.title)}</option>\`).join("")}</select></label>
+      <label class="field"><span>الطالب</span><select name="student_id" required><option value="">اختر طالبًا</option>\${data.students.map((x)=>\`<option value="\${esc(x.id)}" data-school-id="\${esc(x.school_id)}">\${esc([x.first_name,x.middle_name,x.last_name].filter(Boolean).join(" "))} — \${esc(x.student_number||"")}</option>\`).join("")}</select></label>
+      <label class="field"><span>رقم الجلوس</span><input name="seat_number" required maxlength="60"/></label>
+      <label class="field"><span>اللجنة</span><input name="committee_name" maxlength="100"/></label>
+      <div class="form-actions"><button class="button button-primary" type="submit" \${!data.sessions.length||!data.students.length?"disabled":""}>إضافة مرشح</button></div>
+    </form>\`:"";
+  const candidateRows=data.candidates.map((row)=> {
+    const student=students.get(row.student_id);
+    return \`<tr><td>\${esc(data.sessions.find((x)=>x.id===row.exam_session_id)?.title??row.exam_session_id)}</td><td>\${esc(student?[student.first_name,student.middle_name,student.last_name].filter(Boolean).join(" "):row.student_id)}</td><td>\${esc(row.seat_number)}</td><td>\${esc(row.committee_name||"—")}</td></tr>\`;
+  });
+  return heading("الامتحانات","جلسات الامتحانات ومواعيدها والمرشحون المسجلون.",permissions.has("exams.manage")?\`<div class="action-row"><button class="button button-secondary" data-action="toggle-form" data-target="exam-create-form">إنشاء امتحان</button><button class="button button-secondary" data-action="toggle-form" data-target="exam-candidate-form">إضافة مرشح</button></div>\`:"")
     + (permissions.has("exams.manage")?formPanel("exam-create-form",form):"")
+    + (permissions.has("exams.manage")?formPanel("exam-candidate-form",candidateForm):"")
     + table(["الامتحان","الفصل","المادة","الموعد","المدة","الدرجة","الحالة","المرشحون","إجراء"],rows,"لا توجد جلسات امتحانات في هذا النطاق.")
-    + \`<section class="panel"><div class="panel-heading"><div><h3>قائمة المرشحين</h3><p>أسماء الطلاب من السجلات التي تسمح عضويتك بقراءتها.</p></div></div>\${table(["جلسة الامتحان","معرّف الطالب","رقم الجلوس","اللجنة"],candidates.map((row)=>\`<tr><td>\${esc(data.sessions.find((x)=>x.id===row.exam_session_id)?.title??row.exam_session_id)}</td><td>\${esc(row.student_id)}</td><td>\${esc(row.seat_number)}</td><td>\${esc(row.committee_name||"—")}</td></tr>\`),"لا توجد سجلات مرشحين متاحة.")}</section>\`;
+    + \`<section class="panel"><div class="panel-heading"><div><h3>قائمة المرشحين</h3><p>المرشحون الذين تسمح صلاحياتك بقراءتهم.</p></div></div>\${table(["جلسة الامتحان","الطالب","رقم الجلوس","اللجنة"],candidateRows,"لا توجد سجلات مرشحين متاحة.")}</section>\`;
 }
 
 export function renderContent(data, context, permissions) {
