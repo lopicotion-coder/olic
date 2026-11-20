@@ -1,5 +1,6 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert@1";
 import {
+  canInviteSchoolRole,
   hasScopedPermission,
   normalizeEmail,
   normalizeSchoolRole,
@@ -106,4 +107,36 @@ Deno.test("parent must be linked to one or more students in the same school", ()
   validateRosterPayload("parent", { first_name: "A", last_name: "B", relationship: "mother" }, [], [
     "11111111-1111-4111-8111-111111111111",
   ]);
+});
+
+Deno.test("school administrators cannot grant another school-owner or school-admin role", () => {
+  const schoolAdmin = {
+    assignments: [{
+      tenant_id: "tenant-1",
+      school_id: "school-1",
+      class_id: null,
+      scope: "school",
+      permissions: ["users.manage"],
+    }],
+    tenantMemberships: [{ tenant_id: "tenant-1", status: "active" }],
+    schoolMemberships: [{ tenant_id: "tenant-1", school_id: "school-1", status: "active" }],
+  };
+  assertEquals(canInviteSchoolRole(schoolAdmin, "student", "tenant-1", "school-1"), true);
+  assertEquals(canInviteSchoolRole(schoolAdmin, "teacher", "tenant-1", "school-1"), true);
+  assertEquals(canInviteSchoolRole(schoolAdmin, "school_admin", "tenant-1", "school-1"), false);
+  assertEquals(canInviteSchoolRole(schoolAdmin, "school_owner", "tenant-1", "school-1"), false);
+
+  const tenantOwner = {
+    assignments: [{
+      tenant_id: "tenant-1",
+      school_id: null,
+      class_id: null,
+      scope: "tenant",
+      permissions: ["users.manage"],
+    }],
+    tenantMemberships: [{ tenant_id: "tenant-1", status: "active" }],
+    schoolMemberships: [],
+  };
+  assertEquals(canInviteSchoolRole(tenantOwner, "school_admin", "tenant-1", "school-1"), true);
+  assertEquals(canInviteSchoolRole(tenantOwner, "school_owner", "tenant-1", "school-1"), true);
 });
