@@ -578,7 +578,13 @@ async function loadSectionData() {
         fetchScoped(supabase, "assignment_submissions", "id,assignment_id,student_id,submission_text,status,submitted_at,score,feedback,graded_at", ctx, { limit: 500 }),
       ]);
       const ownStudents = ctx.roleKey === "student" ? await fetchMyStudentRecords(supabase, state.user.id) : [];
-      return { assignments, classes: classRows, subjects, submissions, ownStudents };
+      const submissionStudentIds = [...new Set(submissions.map((item)=>item.student_id))];
+      const submissionStudents = submissionStudentIds.length
+        ? await rows(supabase.from("students")
+            .select("id,student_number,first_name,middle_name,last_name")
+            .in("id",submissionStudentIds))
+        : [];
+      return { assignments, classes: classRows, subjects, submissions, ownStudents, submissionStudents };
     }
     case "grades": {
       const [assessments, gradeRows, studentRows] = await Promise.all([
@@ -1113,6 +1119,10 @@ function renderAssignments(data) {
   const classMap = new Map((data.classes??[]).map((item) => [item.id,item.name]));
   const subjectMap = new Map((data.subjects??[]).map((item) => [item.id,item.name]));
   const ownStudentIds = new Set((data.ownStudents??[]).map((item)=>item.id));
+  const submissionStudentMap = new Map((data.submissionStudents??[]).map((item)=>[
+    item.id,
+    [item.first_name,item.middle_name,item.last_name].filter(Boolean).join(" "),
+  ]));
   const ownSubmissions = (data.submissions??[]).filter((row)=>ownStudentIds.has(row.student_id));
   const submittedAssignmentIds = new Set(ownSubmissions.map((row)=>row.assignment_id));
   const rowsHtml = (data.assignments??[]).map((assignment) => {
@@ -1141,7 +1151,7 @@ function renderAssignments(data) {
       : `<div class="info-banner">لا توجد واجبات منشورة غير مسلّمة حاليًا. يمكنك مراجعة سجل تسليماتك بالأسفل.</div>`)
     : "";
   const submissionsPanel = canManage && (data.submissions??[]).length
-    ? `<section class="panel"><div class="panel-heading"><div><h3>تسليمات الطلاب</h3><p>راجع الإجابات وصححها مع تسجيل الدرجة والتعليق.</p></div></div>${table(["الواجب","الحالة","تاريخ التسليم","الدرجة","تعليق المعلم","التصحيح"],(data.submissions??[]).map((item) => {
+    ? `<section class="panel"><div class="panel-heading"><div><h3>تسليمات الطلاب</h3><p>راجع الإجابات وصححها مع تسجيل الدرجة والتعليق.</p></div></div>${table(["الواجب","الطالب","الحالة","تاريخ التسليم","الدرجة","تعليق المعلم","التصحيح"],(data.submissions??[]).map((item) => {
       const assignment=(data.assignments??[]).find((a)=>a.id===item.assignment_id);
       const canGrade=Boolean(assignment)&&["submitted","late","returned","graded"].includes(item.status);
       const form=canGrade?`<form class="inline-grade-form" data-form="grade-assignment-submission">
@@ -1150,7 +1160,7 @@ function renderAssignments(data) {
         <input name="feedback" maxlength="2000" value="${esc(item.feedback??"")}" placeholder="تعليق المعلم" aria-label="تعليق المعلم"/>
         <button class="button button-small button-primary" type="submit">حفظ التصحيح</button>
       </form>`:"—";
-      return `<tr><td>${esc(assignment?.title||"—")}</td><td>${badge(item.status)}</td><td>${dateText(item.submitted_at)}</td><td>${item.score??"—"}</td><td>${esc(item.feedback||"—")}</td><td>${form}</td></tr>`;
+      return `<tr><td>${esc(assignment?.title||"—")}</td><td>${esc(submissionStudentMap.get(item.student_id)||"—")}</td><td>${badge(item.status)}</td><td>${dateText(item.submitted_at)}</td><td>${item.score??"—"}</td><td>${esc(item.feedback||"—")}</td><td>${form}</td></tr>`;
     }))}</section>` : "";
   const ownSubmissionsPanel = has("assignments.submit") && ownSubmissions.length
     ? `<section class="panel"><div class="panel-heading"><div><h3>سجل تسليماتك</h3><p>راجع حالة كل إجابة وتعليق المعلم والدرجة عند نشرها.</p></div></div>${table(["الواجب","الحالة","تاريخ التسليم","الدرجة","تعليق المعلم"],ownSubmissions.map((item)=>`<tr><td>${esc((data.assignments??[]).find((a)=>a.id===item.assignment_id)?.title||"واجب")}</td><td>${badge(item.status)}</td><td>${dateText(item.submitted_at)}</td><td>${item.score??"—"}</td><td>${esc(item.feedback||"—")}</td></tr>`))}</section>` : "";
