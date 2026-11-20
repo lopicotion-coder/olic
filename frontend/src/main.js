@@ -2026,6 +2026,15 @@ root.addEventListener("click", async (event) => {
       state.recoveryMode = false;
       state.recoveryComplete = false;
       render();
+    } else if (type === "exit-invite") {
+      state.inviteMode = false;
+      state.inviteChecking = false;
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete("invite");
+      cleanUrl.hash = "";
+      window.history.replaceState({}, document.title, cleanUrl.pathname + cleanUrl.search);
+      await supabase.auth.signOut();
+      render();
     } else if (type === "toggle-form") {
       const target = document.getElementById(button.dataset.target);
       target?.classList.toggle("hidden");
@@ -2119,6 +2128,35 @@ root.addEventListener("submit", async (event) => {
     }
     return;
   }
+  if (form.id === "invite-password-form") {
+    const data = new FormData(form);
+    const password = String(data.get("password") || "");
+    const confirmation = String(data.get("password_confirm") || "");
+    if (password.length < 8 || password.length > 128 || password !== confirmation) {
+      state.authError = password !== confirmation
+        ? "تأكيد كلمة المرور غير مطابق."
+        : "كلمة المرور يجب ألا تقل عن 8 أحرف.";
+      render();
+      return;
+    }
+    const submit = form.querySelector('button[type="submit"]');
+    if (submit) submit.disabled = true;
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) {
+      state.authError = "تعذّر تعيين كلمة المرور. قد يكون رابط الدعوة منتهي الصلاحية؛ اطلب دعوة جديدة.";
+      render();
+      return;
+    }
+    state.authError = "";
+    state.inviteMode = false;
+    state.inviteChecking = false;
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete("invite");
+    cleanUrl.hash = "";
+    window.history.replaceState({}, document.title, cleanUrl.pathname + cleanUrl.search);
+    await refreshAccess();
+    return;
+  }
   if (form.id === "recovery-form") {
     const data = new FormData(form);
     const password = String(data.get("password") || "");
@@ -2184,6 +2222,7 @@ if (supabaseConfigReady) {
   });
   supabase.auth.getSession().then(({ data, error }) => {
     if (error) {
+      state.inviteChecking = false;
       state.authError = "تعذّر التحقق من جلسة الدخول.";
       render();
       return;
