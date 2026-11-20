@@ -11,16 +11,16 @@ No Vercel or Cloudflare deployment is currently confirmed for My School:
 
 ## Intended production deployment flow
 
-Once the actual frontend source is recovered and committed:
+The current candidate frontend lives in `frontend/`:
 
-1. Confirm the application framework and production build command from its real `package.json`.
-2. Keep the app root at repository root unless the source layout proves otherwise.
-3. Link the `main` branch to Vercel Production.
-4. Link `develop` to Preview.
-5. Add only required runtime environment variables using Vercel's encrypted environment-variable store; never commit secrets.
-6. Configure Cloudflare DNS/proxy only after the Vercel project and domain ownership are verified.
-7. Test authentication, role scoping, RLS, Storage permissions, and tenant isolation against a non-production test environment.
-8. Perform a rollback rehearsal before enabling real schools.
+1. Use Node.js 24 and run `npm install` then `npm run build` from `frontend/`; the static output is `frontend/dist/`.
+2. Configure `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in the hosting provider. Only a publishable/anon key is allowed in browser variables. Never expose a service-role key, database password, provider key or internal worker token.
+3. Configure the production site's Auth redirect URLs and password-recovery redirect URLs in Supabase Auth.
+4. Run the GitHub Actions frontend check and fix all failures.
+5. Validate login, recovery, membership-context switching, RLS row visibility, all write forms, empty states, and tenant/school/class isolation against a non-production Supabase environment.
+6. Resolve the remaining server-side request-context requirement before enabling Bank of Questions or any query whose RLS policy depends on `app.current_tenant_id()` / `app.current_school_id()`.
+7. Keep independent learner identity/practice disabled until the corresponding feature-branch migrations have been backed up, applied to an isolated database and validated.
+8. Only then configure the hosting provider and deploy a reviewed `main` commit. Rehearse rollback before enabling real schools.
 
 ## Cloudflare role
 
