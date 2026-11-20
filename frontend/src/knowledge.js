@@ -199,6 +199,32 @@ export function renderKnowledgeConsole(data) {
 }
 
 export function renderLearningDashboard(data) {
+  const dateLabel=(value)=>{
+    if(!value)return "—";
+    const date=new Date(value);
+    if(Number.isNaN(date.valueOf()))return esc(value);
+    return new Intl.DateTimeFormat("ar-EG",{dateStyle:"medium",timeZone:"Africa/Cairo"}).format(date);
+  };
+  const classRows=(data.classes??[]).map((item)=>`<tr><td><strong>${esc(item.name)}</strong></td><td>${esc(item.grade_name||"—")}</td><td>${esc(item.academic_year_name||"—")}</td><td>${status(item.status)}</td></tr>`);
+  const lessonRows=(data.lessons??[]).map((item)=>`<tr><td><strong>${esc(item.title)}</strong><small>${esc(item.summary||"")}</small></td><td>${esc(item.resource_type||"درس")}</td><td>${dateLabel(item.published_at)}</td><td><button class="button button-small button-primary" data-action="open-learning-lesson" data-id="${esc(item.id)}">ابدأ التعلم</button></td></tr>`);
+  const submissionByPair=new Map((data.submissions??[]).map((item)=>[`${item.student_id}|${item.assignment_id}`,item]));
+  const assignmentRows=(data.assignments??[]).map((item)=>{
+    const studentNames=(data.students??[]).map((student)=>student.first_name).join(", ");
+    const relevant=(data.students??[]).map((student)=>submissionByPair.get(`${student.id}|${item.id}`)).filter(Boolean);
+    const submitted=relevant.length>0;
+    return `<tr><td><strong>${esc(item.title)}</strong><small>${esc(item.instructions||"")}</small></td><td>${dateLabel(item.due_at)}</td><td>${submitted?status(relevant[0].status):status("pending")}</td><td><button class="button button-small button-secondary" data-action="open-learning-assignments">فتح الواجبات</button></td></tr>`;
+  });
+  const gradeRows=(data.grades??[]).map((item)=>`<tr><td>${esc(item.assessment_title)}</td><td>${esc(item.score)}</td><td>${item.max_score==null?"—":esc(item.max_score)}</td><td>${dateLabel(item.published_at)}</td></tr>`);
+  const adaptiveNotice=data.adaptiveUnavailable
+    ? empty("التدريب التكيفي غير متاح على قاعدة الإنتاج الحالية.","يمكنك قراءة الدروس المنشورة وتسليم الواجبات ومراجعة الدرجات. سيظهر التدريب التكيفي بعد اعتماد ترحيلات التعلم واختبارها.")
+    : "";
+  const coreLearning= `
+    ${panel("فصولك الدراسية",table(["الفصل","الصف","السنة الدراسية","الحالة"],classRows,"لا توجد تسجيلات نشطة في فصول دراسية بعد."))}
+    ${panel("الدروس المتاحة",table(["الدرس","النوع","تاريخ النشر","إجراء"],lessonRows,"لم تنشر المدرسة دروسًا متاحة لهذا الحساب بعد."))}
+    ${panel("الواجبات القادمة",table(["الواجب","موعد التسليم","حالة التسليم","إجراء"],assignmentRows,"لا توجد واجبات منشورة لهذه الفصول حاليًا."))}
+    ${panel("آخر الدرجات المنشورة",table(["التقييم","درجتك","الدرجة القصوى","تاريخ النشر"],gradeRows,"لا توجد درجات منشورة لهذا الحساب بعد."))}
+    ${adaptiveNotice}
+  `;
   const masteryRows=(data.mastery??[]).map((row)=>{
     const concept=data.conceptsById?.[row.concept_id];
     const score=Math.round(Number(row.mastery_score)*100);
@@ -271,7 +297,8 @@ export function renderLearningDashboard(data) {
         <strong class="practice-progress-value">${sessionPercent}%</strong>
       </section>`
     : "";
-  return head("تقدّم الطالب","خطوات تعلم مبنية على إجاباتك الفعلية، مع توضيح ما نعرفه وما زلنا نحتاج إلى قياسه.")
+  return head("مساحة التعلم","دروسك وفصولك وواجباتك ونتائجك من السجلات المنشورة فعليًا.")
+    + coreLearning
     + nextActionCard
     + results
     + practiceStatus
