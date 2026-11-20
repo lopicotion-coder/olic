@@ -23,6 +23,7 @@ Build with `npm run build`; preview the static output with `npm run preview`.
 - All application reads and writes use the browser Supabase client and remain subject to database RLS.
 - Cross-school selectors are constrained to the active organization and school context.
 - The student Learning Home reads active class enrollments, published lessons, published assignments, submissions, and published grades from the existing production tables. The Content reader opens the full published lesson body.
+- The assignment workflow supports text submissions, student submission-history review, and teacher-side grading/feedback through the existing RLS-protected assignment submission table. The current database trigger enforces assignment publication and late-submission policy. File attachments are not yet supported in the student submission form.
 - Student/parent lesson lists are additionally filtered in the frontend to school-wide content and classes in their active enrollments. This is defense in depth only: a live Production RLS defect still allows broader class-content reads through the Data API. See P0 issue #15 and do not treat this UI filter as the database security fix.
 
 ## Explicitly unavailable
