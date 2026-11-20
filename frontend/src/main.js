@@ -87,7 +87,16 @@ const ATTENDANCE_VALUES = ["present", "absent", "late", "excused"];
 const CONVERSATION_SCOPES = ["school", "class"];
 const CURRENCY = "EGP";
 
+const invitationCallbackDetected = (() => {
+  const query = new URLSearchParams(window.location.search);
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  return query.get("invite") === "1" &&
+    (hash.get("type") === "invite" || hash.has("access_token") || query.has("code"));
+})();
+
 const state = {
+  inviteMode: invitationCallbackDetected,
+  inviteChecking: invitationCallbackDetected,
   session: null,
   user: null,
   access: null,
@@ -349,6 +358,41 @@ function renderPasswordRecovery() {
             </form>`}
         </div>
       </section>
+    </div>
+    <div id="toast-host" class="toast-host"></div>`;
+}
+
+function renderInvitationPasswordSetup() {
+  return `
+    <div class="auth-layout">
+      <section class="auth-aside">
+        <div class="brand brand-light"><div class="brand-mark">MS</div><div><b>My School</b><small>منظومة إدارة وتعليم</small></div></div>
+        <div class="auth-aside-copy"><span class="eyebrow">تفعيل الدعوة</span><h1>مرحبًا بك في<br/>My School.</h1><p>تم التحقق من رابط الدعوة. اختر كلمة مرور آمنة لإكمال تفعيل حسابك.</p></div>
+      </section>
+      <section class="auth-panel">
+        <form id="invite-password-form" class="auth-form">
+          <div class="auth-heading"><span class="eyebrow">إكمال إنشاء الحساب</span><h2>عيّن كلمة المرور</h2><p>${esc(state.user?.email || "")}</p></div>
+          ${state.authError ? `<div class="form-alert error">${esc(state.authError)}</div>` : ""}
+          <label class="field"><span>كلمة المرور الجديدة</span><input type="password" name="password" autocomplete="new-password" minlength="8" maxlength="128" required/></label>
+          <label class="field"><span>تأكيد كلمة المرور</span><input type="password" name="password_confirm" autocomplete="new-password" minlength="8" maxlength="128" required/></label>
+          <button class="button button-primary button-block" type="submit">تفعيل الحساب</button>
+        </form>
+      </section>
+    </div>
+    <div id="toast-host" class="toast-host"></div>`;
+}
+
+function renderInvitationExpired() {
+  return `
+    <div class="auth-layout">
+      <section class="auth-aside">
+        <div class="brand brand-light"><div class="brand-mark">MS</div><div><b>My School</b><small>منظومة إدارة وتعليم</small></div></div>
+        <div class="auth-aside-copy"><span class="eyebrow">دعوة الحساب</span><h1>تعذّر التحقق<br/>من رابط الدعوة.</h1><p>قد يكون الرابط منتهي الصلاحية أو مستخدمًا من قبل. اطلب من مسؤول المدرسة إرسال دعوة جديدة.</p></div>
+      </section>
+      <section class="auth-panel"><div class="auth-form">
+        <div class="auth-heading"><h2>رابط الدعوة غير صالح</h2><p>يمكنك الرجوع إلى شاشة الدخول بعد طلب رابط جديد من الإدارة.</p></div>
+        <button class="button button-primary button-block" type="button" data-action="exit-invite">العودة لتسجيل الدخول</button>
+      </div></section>
     </div>
     <div id="toast-host" class="toast-host"></div>`;
 }
@@ -1063,6 +1107,16 @@ function render() {
     root.innerHTML = `<div class="setup-screen"><div class="setup-card"><div class="brand"><div class="brand-mark">MS</div><b>My School</b></div><h1>إعداد الاتصال بقاعدة البيانات مطلوب</h1><p>أضف <code>VITE_SUPABASE_URL</code> و<code>VITE_SUPABASE_ANON_KEY</code> في إعدادات البيئة الخاصة بالواجهة. لا تضف service role key إلى المتصفح.</p></div></div>`;
     return;
   }
+  if (state.inviteMode) {
+    if (state.inviteChecking && !state.session) {
+      root.innerHTML = loadingView();
+    } else if (state.session) {
+      root.innerHTML = renderInvitationPasswordSetup();
+    } else {
+      root.innerHTML = renderInvitationExpired();
+    }
+    return;
+  }
   if (state.recoveryMode) {
     root.innerHTML = renderPasswordRecovery();
     return;
@@ -1136,6 +1190,12 @@ async function handleSession(session) {
     state.recoveryMode = false;
     state.recoveryComplete = false;
     state.authMessage = "";
+  }
+  if (state.inviteMode) {
+    state.inviteChecking = false;
+    state.loading = false;
+    render();
+    return;
   }
   state.access = null;
   state.context = null;
