@@ -40,4 +40,4 @@ This repository is Public. Do not commit secrets, production rows, Auth users, p
 
  
 ## Edge Function source control
-Exact snapshots of the currently deployed `ai-gateway` and `ai-worker` functions are checked into `supabase/functions/` on the active feature branch. The worker's internal-token security guard is a proposed branch change only and is not yet deployed to the live project.
+Exact snapshots of the currently deployed `ai-gateway` and `ai-worker` functions are checked into `supabase/functions/` on the active feature branch. The worker's internal-token security guard and unified internal AI Gateway routing are branch-only and are not deployed to the live project. On the current feature branch, Worker chat completions and OpenAI `text-embedding-3-small` embeddings are sent through the protected Gateway; provider API keys remain in Edge Function secrets.
