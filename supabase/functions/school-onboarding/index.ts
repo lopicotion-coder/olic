@@ -585,6 +585,8 @@ async function createSchool(
 
   const schoolInput = asRecord(body.school);
   const ownerInput = asRecord(body.owner);
+  // Match the verified live production schema. Curriculum metadata is intentionally
+  // omitted until its dedicated migration, RLS, and API contract are validated.
   const schoolPayload: Record<string, unknown> = {
     tenant_id: tenantId,
     name: requiredText(schoolInput.name, 180),
@@ -592,20 +594,8 @@ async function createSchool(
     default_locale: optionalText(schoolInput.default_locale, 8) ?? "ar",
     timezone: optionalText(schoolInput.timezone, 80) ?? "Africa/Cairo",
   };
-  for (const field of ["code", "education_system", "curriculum_board", "school_track"] as const) {
-    const value = optionalText(schoolInput[field], field === "code" ? 40 : 160);
-    if (value) schoolPayload[field] = value;
-  }
-  const countryCode = optionalText(schoolInput.country_code, 2);
-  if (countryCode) {
-    if (!/^[A-Z]{2}$/.test(countryCode.toUpperCase())) fail(400, "INVALID_COUNTRY_CODE");
-    schoolPayload.country_code = countryCode.toUpperCase();
-  }
-  const instructionPolicy = optionalText(schoolInput.instruction_language_policy, 20) ?? "adaptive";
-  if (!["adaptive", "ar", "en", "bilingual"].includes(instructionPolicy)) {
-    fail(400, "INVALID_INSTRUCTION_LANGUAGE_POLICY");
-  }
-  schoolPayload.instruction_language_policy = instructionPolicy;
+  const schoolCode = optionalText(schoolInput.code, 40);
+  if (schoolCode) schoolPayload.code = schoolCode;
 
   const email = normalizeEmail(ownerInput.email);
   const ownerName = requiredText(ownerInput.display_name, 180);
