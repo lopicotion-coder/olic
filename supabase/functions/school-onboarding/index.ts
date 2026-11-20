@@ -9,6 +9,7 @@ import {
   schoolRoleScope,
   uniqueIds,
   validateRosterPayload,
+  validateStudentAcademicYearAssignments,
   type ActorAuthorizationContext,
   type ActorAssignment,
   type SchoolRoleKey,
@@ -680,6 +681,7 @@ async function inviteSchoolMember(
   validateRosterPayload(roleKey, roster, classIds, studentIds);
 
   const verifiedClasses = await verifyClassIds(admin, tenantId, schoolId, classIds);
+  if (roleKey === "student") validateStudentAcademicYearAssignments(verifiedClasses);
   await verifyStudentIds(admin, tenantId, schoolId, studentIds);
 
   if (roleKey === "student") {
