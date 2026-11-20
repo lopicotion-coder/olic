@@ -539,9 +539,9 @@ async function loadSectionData() {
     case "classes": {
       const [classRows, grades, years, subjects] = await Promise.all([
         fetchScoped(supabase, "classes", "id,tenant_id,school_id,name,capacity,status,grade_level_id,academic_year_id,campus_id", ctx, { order: "name", limit: 250 }),
-        lookupRows("grade_levels", "id,name,code,status"),
-        lookupRows("academic_years", "id,name,status,is_current,starts_on,ends_on"),
-        lookupRows("subjects", "id,name,code,status,school_id"),
+        lookupRows("grade_levels", "id,tenant_id,school_id,name,code,sort_order,status"),
+        lookupRows("academic_years", "id,tenant_id,school_id,name,status,is_current,starts_on,ends_on"),
+        lookupRows("subjects", "id,tenant_id,school_id,name,code,description,status"),
       ]);
       return { rows: classRows, grades, years, subjects };
     }
@@ -1751,15 +1751,84 @@ async function perform(action) {
     case "create-teacher": {
       throw new Error("إنشاء حساب المعلم متوقف حتى ربط حساب Auth وProfile والعضوية وتعيين الفصول.");
     }
+    case "create-academic-year": {
+      if (!has("academics.manage")) throw new Error("لا تملك صلاحية إعداد السنوات الدراسية.");
+      const schoolId = selectedSchoolId(action.formData);
+      if (!ctx.tenantId || !schoolId) throw new Error("اختر مدرسة ضمن نطاق المؤسسة.");
+      const name = required(action.formData, "name");
+      const startsOn = required(action.formData, "starts_on");
+      const endsOn = required(action.formData, "ends_on");
+      const starts = new Date(`${startsOn}T00:00:00.000Z`);
+      const ends = new Date(`${endsOn}T00:00:00.000Z`);
+      if (Number.isNaN(starts.valueOf()) || Number.isNaN(ends.valueOf()) || ends <= starts) {
+        throw new Error("تاريخ نهاية السنة الدراسية يجب أن يأتي بعد تاريخ بدايتها.");
+      }
+      const status = required(action.formData, "status");
+      if (!["planned","active"].includes(status)) throw new Error("حالة السنة الدراسية غير صحيحة.");
+      const isCurrent = action.formData.get("is_current") === "on";
+      if (isCurrent && status !== "active") throw new Error("السنة الحالية يجب أن تكون نشطة.");
+      const currentExists = (state.data?.years ?? []).some((item)=>item.school_id===schoolId && item.is_current);
+      if (isCurrent && currentExists) throw new Error("يوجد بالفعل سنة حالية لهذه المدرسة. لا يمكن تعيين أكثر من سنة حالية قبل إغلاق السنة السابقة.");
+      await mutation(supabase.from("academic_years").insert({
+        tenant_id: ctx.tenantId,
+        school_id: schoolId,
+        name,
+        starts_on: startsOn,
+        ends_on: endsOn,
+        status,
+        is_current: isCurrent,
+      }), "إنشاء السنة الدراسية");
+      break;
+    }
+    case "create-grade-level": {
+      if (!has("academics.manage")) throw new Error("لا تملك صلاحية إعداد الصفوف الدراسية.");
+      const schoolId = selectedSchoolId(action.formData);
+      if (!ctx.tenantId || !schoolId) throw new Error("اختر مدرسة ضمن نطاق المؤسسة.");
+      const payload = {
+        tenant_id: ctx.tenantId,
+        school_id: schoolId,
+        name: required(action.formData, "name"),
+        sort_order: Number(optional(action.formData, "sort_order") || "0"),
+      };
+      const code = optional(action.formData, "code");
+      if (code) payload.code = code;
+      if (!Number.isInteger(payload.sort_order) || payload.sort_order < 0 || payload.sort_order > 1000) {
+        throw new Error("ترتيب الصف يجب أن يكون رقمًا صحيحًا بين صفر و1000.");
+      }
+      await mutation(supabase.from("grade_levels").insert(payload), "إنشاء الصف الدراسي");
+      break;
+    }
+    case "create-subject": {
+      if (!has("academics.manage")) throw new Error("لا تملك صلاحية إعداد المواد الدراسية.");
+      const schoolId = selectedSchoolId(action.formData);
+      if (!ctx.tenantId || !schoolId) throw new Error("اختر مدرسة ضمن نطاق المؤسسة.");
+      const payload = {
+        tenant_id: ctx.tenantId,
+        school_id: schoolId,
+        name: required(action.formData, "name"),
+      };
+      const code = optional(action.formData, "code");
+      const description = optional(action.formData, "description");
+      if (code) payload.code = code;
+      if (description) payload.description = description;
+      await mutation(supabase.from("subjects").insert(payload), "إنشاء المادة الدراسية");
+      break;
+    }
     case "create-class": {
       if (!has("classes.manage")) throw new Error("لا تملك صلاحية إدارة الفصول.");
       const schoolId = selectedSchoolId(action.formData);
       if (!ctx.tenantId || !schoolId) throw new Error("اختر مدرسة ضمن عضويتك.");
+      const gradeLevelId = required(action.formData, "grade_level_id");
+      const academicYearId = required(action.formData, "academic_year_id");
+      const grade = (state.data?.grades ?? []).find((item)=>item.id===gradeLevelId && item.school_id===schoolId);
+      const year = (state.data?.years ?? []).find((item)=>item.id===academicYearId && item.school_id===schoolId);
+      if (!grade || !year) throw new Error("الصف والسنة الدراسية يجب أن يكونا تابعين للمدرسة المختارة.");
+      if (year.status !== "active") throw new Error("يجب اختيار سنة دراسية نشطة لإنشاء فصل.");
       const payload = {
         tenant_id: ctx.tenantId, school_id: schoolId,
         name: required(action.formData, "name"),
-        grade_level_id: required(action.formData, "grade_level_id"),
-        academic_year_id: required(action.formData, "academic_year_id"),
+        grade_level_id: grade.id,
+        academic_year_id: year.id,
       };
       const capacity = optional(action.formData, "capacity");
       if (capacity) payload.capacity = Number(capacity);
