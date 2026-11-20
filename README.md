@@ -32,8 +32,9 @@ Do not deploy this branch to Vercel or Cloudflare until the release gates in `do
 
 ```text
 olic/
-├── .github/workflows/       # encrypted backup automation
+├── .github/workflows/       # backup automation and frontend CI
 ├── docs/                    # production operations and recovery runbooks
+├── frontend/                # Vite + Supabase browser application (feature branch)
 ├── releases/                # production release manifest
 ├── scripts/backup/          # Storage export and restore utilities
 └── supabase/
