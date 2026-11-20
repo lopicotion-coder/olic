@@ -90,6 +90,12 @@ begin
       on cv.id = cc.source_version_id
      and cv.ingestion_status = 'ready'
      and cv.id = (
+       select latest.id from public.curriculum_source_versions latest
+       where latest.source_id = cc.source_id
+       order by latest.created_at desc,latest.id desc
+       limit 1
+     )
+     and cv.id = (
        select latest.id
        from public.curriculum_source_versions latest
        where latest.source_id = cc.source_id
@@ -116,6 +122,12 @@ begin
     join public.curriculum_source_versions cv
       on cv.id = cc.source_version_id
      and cv.ingestion_status = 'ready'
+     and cv.id = (
+       select latest.id from public.curriculum_source_versions latest
+       where latest.source_id = cc.source_id
+       order by latest.created_at desc,latest.id desc
+       limit 1
+     )
      and cv.id = (
        select latest.id
        from public.curriculum_source_versions latest
@@ -193,6 +205,12 @@ begin
   join public.curriculum_source_versions cv
     on cv.id = cc.source_version_id
    and cv.ingestion_status = 'ready'
+   and cv.id = (
+     select latest.id from public.curriculum_source_versions latest
+     where latest.source_id = cc.source_id
+     order by latest.created_at desc,latest.id desc
+     limit 1
+   )
    and cv.id = (
      select latest.id
      from public.curriculum_source_versions latest
