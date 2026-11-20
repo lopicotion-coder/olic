@@ -22,7 +22,6 @@ const catalog = {
     { role_id: "r-school", permission_id: "p-attendance" },
     { role_id: "r-teacher", permission_id: "p-assignments" },
     { role_id: "r-parent", permission_id: "p-messages" },
-    { role_id: "r-parent", permission_id: "p-fees" },
   ],
 };
 
