@@ -172,7 +172,16 @@ async function routeOpenAICompatible(provider: ProviderName, body: GatewayReques
     );
   }
 
-  return json({ provider, model, raw });
+  const normalized = raw && typeof raw === "object"
+    ? raw as { choices?: unknown; usage?: unknown }
+    : {};
+  return json({
+    provider,
+    model,
+    choices: Array.isArray(normalized.choices) ? normalized.choices : [],
+    usage: normalized.usage ?? null,
+    raw,
+  });
 }
 
 async function routeGemini(body: GatewayRequest): Promise<Response> {
@@ -214,15 +223,27 @@ async function routeGemini(body: GatewayRequest): Promise<Response> {
     return json({ error: "Upstream gemini request failed", status: upstream.status }, { status: 502 });
   }
 
+  const geminiResponse = raw as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    usageMetadata?: {
+      promptTokenCount?: number;
+      candidatesTokenCount?: number;
+      totalTokenCount?: number;
+    };
+  };
   const responseText =
-    (raw as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> })
-      .candidates?.[0]?.content?.parts?.map((p) => p.text ?? "")
+    geminiResponse.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "")
       .join("") ?? "";
 
   return json({
     provider: "gemini",
     model,
     choices: [{ index: 0, message: { role: "assistant", content: responseText }, finish_reason: "stop" }],
+    usage: {
+      prompt_tokens: geminiResponse.usageMetadata?.promptTokenCount,
+      completion_tokens: geminiResponse.usageMetadata?.candidatesTokenCount,
+      total_tokens: geminiResponse.usageMetadata?.totalTokenCount,
+    },
     raw,
   });
 }
