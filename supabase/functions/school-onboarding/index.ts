@@ -283,7 +283,14 @@ async function insertMemberships(
     }).select("id").single());
   }
 
-  const roles = roleScope === "class"
+  const roles: Array<{
+    user_id: string;
+    role_id: string;
+    tenant_id: string;
+    school_id: string | null;
+    class_id: string | null;
+    assigned_by: string;
+  }> = roleScope === "class"
     ? classIds.map((classId) => ({
       user_id: userId,
       role_id: roleId,
