@@ -32,6 +32,7 @@ function sanitizePageKey(pageKey) {
   if (typeof pageKey !== "string") return null;
   const value = pageKey
     .normalize("NFKC")
+    .split(/[?#]/, 1)[0]
     .trim()
     .replace(/[^\p{L}\p{N}._/-]/gu, "")
     .slice(0, 80);
