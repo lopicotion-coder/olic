@@ -25,6 +25,9 @@ The target should be treated as a **controlled MVP delivery date**, not permissi
 - The new frontend is a branch-only Vite/Supabase app; it is not deployed. It has login, password recovery, permission-derived navigation, context switching and operational screens. Online payment processing, independent learner production APIs, and live AI tutor/question-generation UI are not yet available.
 - The current security advisor reports leaked-password protection disabled. This must be enabled and verified before launch.
 - The student engagement increment adds an evidence-based next learning action, bounded practice progress/completion UI and clearing of in-memory practice data on account/context switch. It must remain subject to CI and authenticated role/RLS testing.
+- The branch now contains a protected onboarding Edge Function for tenant/school owner invitations and school member invitations, plus invite password-setup and own-membership activation UI. Auth email/redirect and existing-account linking are not yet production-validated.
+- The branch Learning Home now reads active enrollments, published lessons, assignments, submissions and grades from the current production tables; a lesson reader opens the full content body. Adaptive practice/mastery still depend on unapplied branch migrations.
+- The Production `content_items_read` policy has a P0 class-scope defect: the school membership predicate can reveal published class-specific content to users who are not enrolled in that class. Issue #15 tracks the database policy correction; frontend filtering is defense-in-depth only and does not close the Data API exposure.
 
 ## Launch scope to freeze
 
@@ -72,6 +75,7 @@ These are not dropped product ideas; they are explicitly outside the 30 November
 - Do not apply the 11 branch migrations to production. First recover the missing applied schema baseline and validate the migration sequence in a local environment using existing tools only.
 - Validate constraints, functions, RLS, grants, triggers, indexes and rollback/recovery behavior.
 - Run tenant isolation and role-matrix tests for platform admin, school admin, teacher, assistant, student and parent.
+- Fix P0 issue #15 in `content_items_read`: school-wide content may use school access; class-scoped content must require `app.can_access_class`. Add negative student/parent/teacher tests proving that users cannot read lessons for unassigned classes.
 - Configure provider routes, model allowlists, token prices, tenant/platform budgets, rate limits and secrets in staging.
 - Verify interactive and background AI requests, reservation/settlement, failure paths, request caps, queue processing, dead letters and monitoring.
 - Test real curriculum ingestion and citations with permitted sample content.
