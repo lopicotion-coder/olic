@@ -233,7 +233,13 @@ function selectedSchoolId(formData) {
 }
 
 function applyContext(context) {
+  const contextChanged = state.context?.key !== context?.key;
   state.context = context;
+  if (contextChanged) {
+    state.practiceSet = [];
+    state.lastPracticeResult = null;
+    state.practiceSession = null;
+  }
   saveContextPreference(context);
   const visible = currentSections();
   if (context?.roleKey === "student" && visible.includes("learning")) state.section = "learning";
@@ -1065,6 +1071,13 @@ function selectContext(contexts) {
 }
 
 async function handleSession(session) {
+  const previousUserId = state.user?.id ?? null;
+  const nextUserId = session?.user?.id ?? null;
+  if (previousUserId !== nextUserId) {
+    state.practiceSet = [];
+    state.lastPracticeResult = null;
+    state.practiceSession = null;
+  }
   state.session = session;
   state.user = session?.user ?? null;
   state.authError = "";
