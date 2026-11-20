@@ -27,6 +27,12 @@ type GatewayPayload = {
   raw?: unknown;
 };
 
+function stripTrailingSlashes(value: string): string {
+  let result = value;
+  while (result.endsWith("/")) result = result.slice(0, -1);
+  return result;
+}
+
 function finiteNonNegative(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
@@ -87,8 +93,8 @@ export async function callAiGateway(
     throw new Error("AI_GATEWAY_INTERNAL_TOKEN_MISSING_OR_TOO_SHORT");
   }
 
-  const gatewayBaseUrl = (options.endpoint?.trim() ||
-    `${supabaseUrl}/functions/v1/ai-gateway`).replace(/\\/+$/, "");
+  const gatewayBaseUrl = stripTrailingSlashes(options.endpoint?.trim() ||
+    `${supabaseUrl}/functions/v1/ai-gateway`);
   const endpoint = `${gatewayBaseUrl}/v1/chat/completions`;
   let parsedEndpoint: URL;
   try {
@@ -216,7 +222,7 @@ export type CallAiGatewayEmbeddingsOptions = {
 export async function callAiGatewayEmbeddings(
   options: CallAiGatewayEmbeddingsOptions,
 ): Promise<GatewayEmbeddingResult> {
-  const supabaseUrl = options.supabaseUrl.trim().replace(/\\/+$/, "");
+  const supabaseUrl = stripTrailingSlashes(options.supabaseUrl.trim());
   if (!supabaseUrl || !options.serviceRoleKey) {
     throw new Error("AI_GATEWAY_SUPABASE_SERVICE_CREDENTIALS_MISSING");
   }
@@ -228,8 +234,8 @@ export async function callAiGatewayEmbeddings(
     throw new Error("AI_GATEWAY_EMBEDDING_INPUT_INVALID");
   }
 
-  const gatewayBaseUrl = (options.endpoint?.trim() ||
-    `${supabaseUrl}/functions/v1/ai-gateway`).replace(/\\/+$/, "");
+  const gatewayBaseUrl = stripTrailingSlashes(options.endpoint?.trim() ||
+    `${supabaseUrl}/functions/v1/ai-gateway`);
   let parsedEndpoint: URL;
   try {
     parsedEndpoint = new URL(`${gatewayBaseUrl}/v1/embeddings`);
