@@ -235,7 +235,8 @@ function applyContext(context) {
   state.context = context;
   saveContextPreference(context);
   const visible = currentSections();
-  if (!visible.includes(state.section)) state.section = visible[0] ?? "overview";
+  if (context?.roleKey === "student" && visible.includes("learning")) state.section = "learning";
+  else if (!visible.includes(state.section)) state.section = visible[0] ?? "overview";
   state.selectedConversationId = "";
   state.selectedAttendanceSessionId = "";
   return loadSection();
@@ -1039,6 +1040,11 @@ async function refreshAccess() {
     state.access = await loadAccessModel(supabase, state.user);
     state.locale = state.access.profile?.preferred_locale === "en" ? "en" : "ar";
     state.context = selectContext(state.access.contexts);
+    if (state.context?.roleKey === "student" && visibleSections(state.context).includes("learning")) {
+      state.section = "learning";
+    } else if (!visibleSections(state.context).includes(state.section)) {
+      state.section = "overview";
+    }
     if (state.context) await loadSection();
     else {
       state.loading = false;
