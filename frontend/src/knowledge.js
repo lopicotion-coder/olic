@@ -205,8 +205,9 @@ export function renderLearningDashboard(data) {
     if(Number.isNaN(date.valueOf()))return esc(value);
     return new Intl.DateTimeFormat("ar-EG",{dateStyle:"medium",timeZone:"Africa/Cairo"}).format(date);
   };
+  const classNameById=new Map((data.classes??[]).map((item)=>[item.id,item.name]));
   const classRows=(data.classes??[]).map((item)=>`<tr><td><strong>${esc(item.name)}</strong></td><td>${esc(item.grade_name||"—")}</td><td>${esc(item.academic_year_name||"—")}</td><td>${status(item.status)}</td></tr>`);
-  const lessonRows=(data.lessons??[]).map((item)=>`<tr><td><strong>${esc(item.title)}</strong><small>${esc(item.summary||"")}</small></td><td>${esc(item.resource_type||"درس")}</td><td>${dateLabel(item.published_at)}</td><td><button class="button button-small button-primary" data-action="open-learning-lesson" data-id="${esc(item.id)}">ابدأ التعلم</button></td></tr>`);
+  const lessonRows=(data.lessons??[]).map((item)=>`<tr><td><strong>${esc(item.title)}</strong><small>${esc(item.summary||"")}</small></td><td>${esc(classNameById.get(item.class_id)||"كل المدرسة")}</td><td>${esc(item.resource_type||"درس")}</td><td>${dateLabel(item.published_at)}</td><td><button class="button button-small button-primary" data-action="open-learning-lesson" data-id="${esc(item.id)}">ابدأ التعلم</button></td></tr>`);
   const submissionByPair=new Map((data.submissions??[]).map((item)=>[`${item.student_id}|${item.assignment_id}`,item]));
   const assignmentRows=(data.assignments??[]).map((item)=>{
     const enrolledForAssignment=(data.enrollments??[]).filter((enrollment)=>enrollment.class_id===item.class_id);
@@ -217,7 +218,7 @@ export function renderLearningDashboard(data) {
       return `${name}: ${submission?submission.status:"لم يسلّم بعد"}`;
     });
     const submissionLabel=perStudent.length?perStudent.join(" · "):"لا يوجد تسجيل نشط";
-    return `<tr><td><strong>${esc(item.title)}</strong><small>${esc(item.instructions||"")}</small></td><td>${dateLabel(item.due_at)}</td><td>${esc(submissionLabel)}</td><td><button class="button button-small button-secondary" data-action="open-learning-assignments">فتح الواجبات</button></td></tr>`;
+    return `<tr><td><strong>${esc(item.title)}</strong><small>${esc(item.instructions||"")}</small></td><td>${esc(classNameById.get(item.class_id)||"—")}</td><td>${dateLabel(item.due_at)}</td><td>${esc(submissionLabel)}</td><td><button class="button button-small button-secondary" data-action="open-learning-assignments">فتح الواجبات</button></td></tr>`;
   });
   const showStudentColumn=(data.students??[]).length>1;
   const gradeHeaders=showStudentColumn?["الطالب","التقييم","الدرجة","الدرجة القصوى","تاريخ النشر"]:["التقييم","الدرجة","الدرجة القصوى","تاريخ النشر"];
@@ -227,8 +228,8 @@ export function renderLearningDashboard(data) {
     : "";
   const coreLearning= `
     ${panel("فصولك الدراسية",table(["الفصل","الصف","السنة الدراسية","الحالة"],classRows,"لا توجد تسجيلات نشطة في فصول دراسية بعد."))}
-    ${panel("الدروس المتاحة",table(["الدرس","النوع","تاريخ النشر","إجراء"],lessonRows,"لم تنشر المدرسة دروسًا متاحة لهذا الحساب بعد."))}
-    ${panel("الواجبات القادمة",table(["الواجب","موعد التسليم","حالة التسليم","إجراء"],assignmentRows,"لا توجد واجبات منشورة لهذه الفصول حاليًا."))}
+    ${panel("الدروس المتاحة",table(["الدرس","الفصل","النوع","تاريخ النشر","إجراء"],lessonRows,"لم تنشر المدرسة دروسًا متاحة لهذا الحساب بعد."))}
+    ${panel("الواجبات القادمة",table(["الواجب","الفصل","موعد التسليم","حالة التسليم","إجراء"],assignmentRows,"لا توجد واجبات منشورة لهذه الفصول حاليًا."))}
     ${panel("آخر الدرجات المنشورة",table(gradeHeaders,gradeRows,"لا توجد درجات منشورة لهذا الحساب بعد."))}
     ${adaptiveNotice}
   `;
