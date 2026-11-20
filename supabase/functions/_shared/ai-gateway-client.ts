@@ -87,8 +87,9 @@ export async function callAiGateway(
     throw new Error("AI_GATEWAY_INTERNAL_TOKEN_MISSING_OR_TOO_SHORT");
   }
 
-  const endpoint = options.endpoint?.trim() ||
-    `${supabaseUrl}/functions/v1/ai-gateway/v1/chat/completions`;
+  const gatewayBaseUrl = (options.endpoint?.trim() ||
+    `${supabaseUrl}/functions/v1/ai-gateway`).replace(/\\/+$/, "");
+  const endpoint = `${gatewayBaseUrl}/v1/chat/completions`;
   let parsedEndpoint: URL;
   try {
     parsedEndpoint = new URL(endpoint);
@@ -145,6 +146,124 @@ export async function callAiGateway(
     }
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error("AI_GATEWAY_REQUEST_TIMED_OUT");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export type GatewayEmbeddingResult = {
+  provider: "openai";
+  model: string;
+  vectors: number[][];
+  promptTokens: number;
+};
+
+type GatewayEmbeddingPayload = {
+  provider?: unknown;
+  model?: unknown;
+  data?: Array<{ index?: unknown; embedding?: unknown }>;
+  usage?: { prompt_tokens?: unknown; total_tokens?: unknown } | null;
+};
+
+export function parseAiGatewayEmbeddingResponse(
+  expectedModel: string,
+  payload: unknown,
+): GatewayEmbeddingResult {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("AI_GATEWAY_INVALID_EMBEDDING_RESPONSE");
+  }
+  const body = payload as GatewayEmbeddingPayload;
+  if (body.provider !== "openai" || body.model !== expectedModel) {
+    throw new Error("AI_GATEWAY_EMBEDDING_ROUTE_MISMATCH");
+  }
+  if (!Array.isArray(body.data) || body.data.length < 1 || body.data.length > 64) {
+    throw new Error("AI_GATEWAY_EMBEDDING_BATCH_INVALID");
+  }
+  const sorted = [...body.data].sort((a, b) => Number(a.index) - Number(b.index));
+  const vectors = sorted.map((item) => {
+    if (!Array.isArray(item.embedding) || item.embedding.length !== 1536 ||
+        item.embedding.some((v) => typeof v !== "number" || !Number.isFinite(v))) {
+      throw new Error("AI_GATEWAY_EMBEDDING_DIMENSION_INVALID");
+    }
+    return item.embedding as number[];
+  });
+  const usage = finiteNonNegative(body.usage?.prompt_tokens) ??
+    finiteNonNegative(body.usage?.total_tokens) ?? 0;
+  return { provider: "openai", model: expectedModel, vectors, promptTokens: usage };
+}
+
+export type CallAiGatewayEmbeddingsOptions = {
+  supabaseUrl: string;
+  endpoint?: string;
+  serviceRoleKey: string;
+  internalToken: string;
+  model: string;
+  input: string[];
+  timeoutMs?: number;
+  fetcher?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+};
+
+export async function callAiGatewayEmbeddings(
+  options: CallAiGatewayEmbeddingsOptions,
+): Promise<GatewayEmbeddingResult> {
+  const supabaseUrl = options.supabaseUrl.trim().replace(/\\/+$/, "");
+  if (!supabaseUrl || !options.serviceRoleKey) {
+    throw new Error("AI_GATEWAY_SUPABASE_SERVICE_CREDENTIALS_MISSING");
+  }
+  if (options.internalToken.length < 32) {
+    throw new Error("AI_GATEWAY_INTERNAL_TOKEN_MISSING_OR_TOO_SHORT");
+  }
+  if (options.input.length < 1 || options.input.length > 64 ||
+      options.input.some((value) => typeof value !== "string" || !value.trim())) {
+    throw new Error("AI_GATEWAY_EMBEDDING_INPUT_INVALID");
+  }
+
+  const gatewayBaseUrl = (options.endpoint?.trim() ||
+    `${supabaseUrl}/functions/v1/ai-gateway`).replace(/\\/+$/, "");
+  let parsedEndpoint: URL;
+  try {
+    parsedEndpoint = new URL(`${gatewayBaseUrl}/v1/embeddings`);
+  } catch {
+    throw new Error("AI_GATEWAY_URL_INVALID");
+  }
+  if (parsedEndpoint.protocol !== "https:" && parsedEndpoint.hostname !== "localhost" && parsedEndpoint.hostname !== "127.0.0.1") {
+    throw new Error("AI_GATEWAY_URL_MUST_USE_HTTPS");
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort("AI gateway timeout"), options.timeoutMs ?? 90_000);
+  try {
+    const fetcher = options.fetcher ?? fetch;
+    const response = await fetcher(parsedEndpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        apikey: options.serviceRoleKey,
+        authorization: `Bearer ${options.serviceRoleKey}`,
+        "x-gateway-token": options.internalToken,
+      },
+      body: JSON.stringify({ model: options.model, input: options.input }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`ai-gateway embeddings request failed (${response.status})`);
+    }
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new Error("AI_GATEWAY_EMBEDDING_RESPONSE_IS_NOT_JSON");
+    }
+    return parseAiGatewayEmbeddingResponse(options.model, payload);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("ai-gateway embeddings request failed (")) {
+      throw error;
+    }
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("AI_GATEWAY_EMBEDDING_REQUEST_TIMED_OUT");
     }
     throw error;
   } finally {
