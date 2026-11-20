@@ -705,29 +705,157 @@ async function loadSectionData() {
       let students = [];
       if (ctx.roleKey === "student") students = await fetchMyStudentRecords(supabase,state.user.id);
       else if (ctx.roleKey === "parent") students = await fetchGuardianStudentRecords(supabase,state.user.id);
-      else if (has("students.read")) students = await fetchScoped(supabase,"students","id,tenant_id,school_id,student_number,first_name,middle_name,last_name,status",ctx,{order:"first_name",limit:500});
+      else if (has("students.read")) students = await fetchScoped(
+        supabase,
+        "students",
+        "id,tenant_id,school_id,student_number,first_name,middle_name,last_name,status",
+        ctx,
+        { order: "first_name", limit: 500 },
+      );
+
       const studentIds = [...new Set(students.map((item)=>item.id))];
-      const mastery = studentIds.length ? await rows(supabase.from("student_skill_mastery")
-        .select("id,tenant_id,school_id,student_id,concept_id,mastery_score,confidence_score,evidence_count,last_evidence_at,updated_at")
-        .in("student_id",studentIds).order("mastery_score",{ascending:true}).limit(2000)) : [];
-      const conceptIds = [...new Set(mastery.map((item)=>item.concept_id))];
-      const concepts = conceptIds.length ? await rows(supabase.from("curriculum_concepts")
-        .select("id,country_code,subject_code,grade_code,concept_key,title,status").in("id",conceptIds)) : [];
-      const conceptsById = Object.fromEntries(concepts.map((item)=>[item.id,item]));
-      const studentNameById = Object.fromEntries(students.map((student)=>[student.id,[student.first_name,student.middle_name,student.last_name].filter(Boolean).join(" ")]));
-      const namedMastery = mastery.map((item)=>({...item,student_name:studentNameById[item.student_id]??""}));
-      let tracks = [];
-      if (ctx.roleKey === "student") {
-        const trackSets = await Promise.all(students.map(async (student)=>{
-          const {data,error}=await supabase.rpc("get_student_learning_tracks",{p_student_id:student.id});
-          if(error) throw error;
-          return (data??[]).map((track)=>({...track,student_id:student.id,student_name:studentNameById[student.id]}));
-        }));
-        tracks = trackSets.flat();
+      const schoolIds = [...new Set(students.map((item)=>item.school_id).filter(Boolean))];
+      let enrollments = [];
+      if (studentIds.length) {
+        enrollments = await rows(supabase.from("student_enrollments")
+          .select("id,tenant_id,school_id,student_id,class_id,academic_year_id,status,enrolled_on")
+          .in("student_id",studentIds).eq("status","active").limit(1000));
       }
-      return { students, mastery:namedMastery, conceptsById, tracks, practice:state.practiceSet??[], lastPracticeResult:state.lastPracticeResult, practiceSession:state.practiceSession, canPractice:ctx.roleKey==="student" };
+      const classIds = [...new Set(enrollments.map((item)=>item.class_id))];
+      const yearIds = [...new Set(enrollments.map((item)=>item.academic_year_id))];
+
+      const [
+        classes,
+        lessonsRaw,
+        assignmentsRaw,
+        submissionsRaw,
+        gradesRaw,
+        assessmentRows,
+        masteryResult,
+      ] = await Promise.all([
+        classIds.length
+          ? rows(supabase.from("classes")
+              .select("id,tenant_id,school_id,name,grade_level_id,academic_year_id,status")
+              .in("id",classIds).limit(300))
+          : Promise.resolve([]),
+        schoolIds.length
+          ? rows(supabase.from("content_items")
+              .select("id,tenant_id,school_id,class_id,subject_id,title,summary,resource_type,status,published_at,updated_at")
+              .in("school_id",schoolIds).eq("status","published")
+              .order("published_at",{ascending:false}).limit(250))
+          : Promise.resolve([]),
+        classIds.length
+          ? rows(supabase.from("assignments")
+              .select("id,tenant_id,school_id,class_id,subject_id,title,instructions,due_at,max_score,status,published_at")
+              .in("class_id",classIds).eq("status","published")
+              .order("due_at",{ascending:true}).limit(300))
+          : Promise.resolve([]),
+        studentIds.length
+          ? rows(supabase.from("assignment_submissions")
+              .select("id,assignment_id,student_id,status,submitted_at,score,feedback")
+              .in("student_id",studentIds).limit(500))
+          : Promise.resolve([]),
+        studentIds.length
+          ? rows(supabase.from("grades")
+              .select("id,assessment_id,student_id,score,feedback,published_at,created_at")
+              .in("student_id",studentIds).not("published_at","is",null)
+              .order("published_at",{ascending:false}).limit(500))
+          : Promise.resolve([]),
+        classIds.length
+          ? rows(supabase.from("assessments")
+              .select("id,class_id,title,max_score,assessment_date,is_published")
+              .in("class_id",classIds).eq("is_published",true).limit(500))
+          : Promise.resolve([]),
+        studentIds.length
+          ? supabase.from("student_skill_mastery")
+              .select("id,tenant_id,school_id,student_id,concept_id,mastery_score,confidence_score,evidence_count,last_evidence_at,updated_at")
+              .in("student_id",studentIds).order("mastery_score",{ascending:true}).limit(2000)
+          : Promise.resolve({data:[],error:null}),
+      ]);
+
+      const visibleClassIds = new Set(classIds);
+      const lessons = lessonsRaw.filter((item)=>!item.class_id || visibleClassIds.has(item.class_id));
+      const assignments = assignmentsRaw.filter((item)=>visibleClassIds.has(item.class_id));
+      const submissions = submissionsRaw.filter((item)=>studentIds.includes(item.student_id));
+      const assessmentById = Object.fromEntries(assessmentRows.map((item)=>[item.id,item]));
+      const grades = gradesRaw
+        .filter((item)=>studentIds.includes(item.student_id))
+        .map((item)=>({...item,assessment_title:assessmentById[item.assessment_id]?.title ?? "تقييم",max_score:assessmentById[item.assessment_id]?.max_score ?? null}));
+
+      let mastery = [];
+      let conceptsById = {};
+      const missingSchemaCodes = ["42P01","42883","PGRST202","PGRST205"];
+      if (masteryResult.error) {
+        if (!missingSchemaCodes.includes(masteryResult.error.code)) throw masteryResult.error;
+      } else {
+        mastery = masteryResult.data ?? [];
+        const conceptIds = [...new Set(mastery.map((item)=>item.concept_id))];
+        if (conceptIds.length) {
+          const conceptResult = await supabase.from("curriculum_concepts")
+            .select("id,country_code,subject_code,grade_code,concept_key,title,status")
+            .in("id",conceptIds);
+          if (conceptResult.error) {
+            if (!missingSchemaCodes.includes(conceptResult.error.code)) throw conceptResult.error;
+          } else {
+            conceptsById = Object.fromEntries((conceptResult.data??[]).map((item)=>[item.id,item]));
+          }
+        }
+      }
+
+      const studentNameById = Object.fromEntries(students.map((student)=>[
+        student.id,[student.first_name,student.middle_name,student.last_name].filter(Boolean).join(" "),
+      ]));
+      const namedMastery = mastery.map((item)=>({...item,student_name:studentNameById[item.student_id]??""}));
+
+      let tracks = [];
+      let adaptiveAvailable = false;
+      if (ctx.roleKey === "student") {
+        try {
+          const trackSets = await Promise.all(students.map(async (student)=>{
+            const {data,error}=await supabase.rpc("get_student_learning_tracks",{p_student_id:student.id});
+            if(error) throw error;
+            return (data??[]).map((track)=>({...track,student_id:student.id,student_name:studentNameById[student.id]}));
+          }));
+          tracks = trackSets.flat();
+          adaptiveAvailable = tracks.length > 0;
+        } catch (error) {
+          if (!missingSchemaCodes.includes(error?.code)) throw error;
+          tracks = [];
+          adaptiveAvailable = false;
+        }
+      }
+
+      const [gradesLevels,academicYears] = await Promise.all([
+        classIds.length ? lookupRows("grade_levels","id,name,code",{limit:300}) : Promise.resolve([]),
+        yearIds.length ? rows(supabase.from("academic_years").select("id,name,status,is_current").in("id",yearIds)) : Promise.resolve([]),
+      ]);
+      const gradeNameById = Object.fromEntries(gradesLevels.map((item)=>[item.id,item.name]));
+      const yearNameById = Object.fromEntries(academicYears.map((item)=>[item.id,item.name]));
+      const enrolledClasses = classes.map((item)=>({
+        ...item,
+        grade_name:gradeNameById[item.grade_level_id]??"",
+        academic_year_name:yearNameById[item.academic_year_id]??"",
+      }));
+
+      return {
+        students,
+        classes:enrolledClasses,
+        enrollments,
+        lessons,
+        assignments,
+        submissions,
+        grades,
+        mastery:namedMastery,
+        conceptsById,
+        tracks,
+        practice:state.practiceSet??[],
+        lastPracticeResult:state.lastPracticeResult,
+        practiceSession:state.practiceSession,
+        canPractice:ctx.roleKey==="student" && adaptiveAvailable,
+        adaptiveUnavailable:ctx.roleKey==="student" && !adaptiveAvailable,
+      };
     }
-        case "questions":
+    case "questions":
       return { rows: [], contextNotConfigured: true };
     case "profile": {
       const { data, error } = await supabase.from("profiles")
