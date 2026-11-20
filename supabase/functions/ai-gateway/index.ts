@@ -39,6 +39,18 @@ function allowedModels(provider: ProviderName): Set<string> {
   return new Set(configured.split(",").map((value) => value.trim()).filter(Boolean));
 }
 
+function allowedEmbeddingModels(): Set<string> {
+  const configured = Deno.env.get("AI_GATEWAY_ALLOWED_EMBEDDING_MODELS_OPENAI") ?? "text-embedding-3-small";
+  return new Set(configured.split(",").map((value) => value.trim()).filter(Boolean));
+}
+
+function gatewayPath(pathname: string): string {
+  const marker = "/functions/v1/ai-gateway";
+  const markerIndex = pathname.indexOf(marker);
+  const relative = markerIndex >= 0 ? pathname.slice(markerIndex + marker.length) : pathname;
+  return relative || "/";
+}
+
 function json(data: unknown, init?: ResponseInit): Response {
   const headers = new Headers(init?.headers);
   headers.set("content-type", "application/json; charset=utf-8");
@@ -248,25 +260,102 @@ async function routeGemini(body: GatewayRequest): Promise<Response> {
   });
 }
 
+async function routeOpenAIEmbeddings(reqBody: { model?: string; input?: unknown }): Promise<Response> {
+  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!apiKey) return json({ error: "Missing API key for provider openai" }, { status: 500 });
+
+  const model = String(reqBody.model ?? "text-embedding-3-small").trim();
+  if (!model || model.length > 160 || !allowedEmbeddingModels().has(model)) {
+    return json({ error: "Requested embedding model is not in the configured allowlist" }, { status: 403 });
+  }
+
+  if (!Array.isArray(reqBody.input) || reqBody.input.length < 1 || reqBody.input.length > 64) {
+    return json({ error: "input must contain between 1 and 64 texts" }, { status: 400 });
+  }
+  let totalCharacters = 0;
+  for (const item of reqBody.input) {
+    if (typeof item !== "string" || item.length < 1 || item.length > 48_000) {
+      return json({ error: "Each embedding input must be a non-empty text under 48000 characters" }, { status: 400 });
+    }
+    totalCharacters += item.length;
+  }
+  if (totalCharacters > 200_000) return json({ error: "Embedding input is too large" }, { status: 413 });
+
+  const upstream = await callWithTimeout("https://api.openai.com/v1/embeddings", {
+    method: "POST",
+    headers: openAIHeaders(apiKey),
+    body: JSON.stringify({ model, input: reqBody.input, dimensions: 1536 }),
+  });
+
+  const text = await upstream.text();
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    raw = text;
+  }
+
+  if (!upstream.ok) {
+    console.error("OpenAI embedding request failed", { status: upstream.status });
+    return json({ error: "Upstream openai embeddings request failed", status: upstream.status }, { status: 502 });
+  }
+
+  const body = raw && typeof raw === "object"
+    ? raw as { data?: unknown; usage?: unknown }
+    : {};
+  if (!Array.isArray(body.data) || body.data.length !== reqBody.input.length) {
+    return json({ error: "Embedding provider returned an incomplete batch" }, { status: 502 });
+  }
+
+  return json({ provider: "openai", model, data: body.data, usage: body.usage ?? null });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204 });
 
   const url = new URL(req.url);
+  const path = gatewayPath(url.pathname);
   if (req.method === "GET") {
-    if (url.pathname === "/health" || url.pathname === "/") {
+    if (path === "/health" || path === "/") {
       return json({ ok: true, service: "ai-gateway" });
     }
     return json({ error: "Not found" }, { status: 404 });
   }
 
   if (req.method !== "POST") return json({ error: "Method not allowed" }, { status: 405 });
-  if (url.pathname !== "/v1/chat/completions") return json({ error: "Not found" }, { status: 404 });
+  if (path !== "/v1/chat/completions" && path !== "/v1/embeddings") {
+    return json({ error: "Not found" }, { status: 404 });
+  }
 
   if (!GATEWAY_INTERNAL_TOKEN) {
     return json({ error: "AI gateway is not configured for internal use" }, { status: 503 });
   }
   if (!(await hasValidGatewayToken(req, GATEWAY_INTERNAL_TOKEN))) {
     return json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (path === "/v1/embeddings") {
+    const contentLength = Number(req.headers.get("content-length") ?? "0");
+    if (contentLength > MAX_REQUEST_BYTES) return json({ error: "Request body too large" }, { status: 413 });
+    const rawBody = await req.text();
+    if (new TextEncoder().encode(rawBody).byteLength > MAX_REQUEST_BYTES) {
+      return json({ error: "Request body too large" }, { status: 413 });
+    }
+    let body: { model?: string; input?: unknown };
+    try {
+      body = JSON.parse(rawBody) as { model?: string; input?: unknown };
+    } catch {
+      return json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return json({ error: "Invalid request body" }, { status: 400 });
+    }
+    try {
+      return await routeOpenAIEmbeddings(body);
+    } catch (err) {
+      console.error("AI embedding gateway execution failed", err);
+      return json({ error: "AI embedding gateway execution failed" }, { status: 500 });
+    }
   }
 
   const contentLength = Number(req.headers.get("content-length") ?? "0");
