@@ -1141,7 +1141,17 @@ function renderAssignments(data) {
       : `<div class="info-banner">لا توجد واجبات منشورة غير مسلّمة حاليًا. يمكنك مراجعة سجل تسليماتك بالأسفل.</div>`)
     : "";
   const submissionsPanel = canManage && (data.submissions??[]).length
-    ? `<section class="panel"><div class="panel-heading"><div><h3>تسليمات الطلاب</h3><p>الدرجات والتعليقات المسجلة على التسليمات.</p></div></div>${table(["الواجب","الحالة","تاريخ التسليم","الدرجة","تعليق المعلم"],(data.submissions??[]).map((item) => `<tr><td>${esc((data.assignments??[]).find((a) => a.id === item.assignment_id)?.title || "—")}</td><td>${badge(item.status)}</td><td>${dateText(item.submitted_at)}</td><td>${item.score ?? "—"}</td><td>${esc(item.feedback || "—")}</td></tr>`))}</section>` : "";
+    ? `<section class="panel"><div class="panel-heading"><div><h3>تسليمات الطلاب</h3><p>راجع الإجابات وصححها مع تسجيل الدرجة والتعليق.</p></div></div>${table(["الواجب","الحالة","تاريخ التسليم","الدرجة","تعليق المعلم","التصحيح"],(data.submissions??[]).map((item) => {
+      const assignment=(data.assignments??[]).find((a)=>a.id===item.assignment_id);
+      const canGrade=Boolean(assignment)&&["submitted","late","returned","graded"].includes(item.status);
+      const form=canGrade?`<form class="inline-grade-form" data-form="grade-assignment-submission">
+        <input type="hidden" name="submission_id" value="${esc(item.id)}"/>
+        <input type="number" name="score" min="0" step="0.01" ${assignment.max_score==null?"":`max="${esc(assignment.max_score)}"`} value="${item.score??""}" required aria-label="الدرجة"/>
+        <input name="feedback" maxlength="2000" value="${esc(item.feedback??"")}" placeholder="تعليق المعلم" aria-label="تعليق المعلم"/>
+        <button class="button button-small button-primary" type="submit">حفظ التصحيح</button>
+      </form>`:"—";
+      return `<tr><td>${esc(assignment?.title||"—")}</td><td>${badge(item.status)}</td><td>${dateText(item.submitted_at)}</td><td>${item.score??"—"}</td><td>${esc(item.feedback||"—")}</td><td>${form}</td></tr>`;
+    }))}</section>` : "";
   const ownSubmissionsPanel = has("assignments.submit") && ownSubmissions.length
     ? `<section class="panel"><div class="panel-heading"><div><h3>سجل تسليماتك</h3><p>راجع حالة كل إجابة وتعليق المعلم والدرجة عند نشرها.</p></div></div>${table(["الواجب","الحالة","تاريخ التسليم","الدرجة","تعليق المعلم"],ownSubmissions.map((item)=>`<tr><td>${esc((data.assignments??[]).find((a)=>a.id===item.assignment_id)?.title||"واجب")}</td><td>${badge(item.status)}</td><td>${dateText(item.submitted_at)}</td><td>${item.score??"—"}</td><td>${esc(item.feedback||"—")}</td></tr>`))}</section>` : "";
   return sectionHead("الواجبات", "الواجبات المنشورة والمسودات وتسليمات الطلاب.", canManage ? `<button class="button button-secondary" data-action="toggle-form" data-target="assignment-create-form">إنشاء واجب</button>` : "")
@@ -1730,6 +1740,35 @@ async function perform(action) {
         .update({ status: "published", published_at: new Date().toISOString() })
         .eq("id", action.id);
       if (error) throw error;
+      break;
+    }
+    case "grade-assignment-submission": {
+      if (!has("assignments.manage")) throw new Error("لا تملك صلاحية تصحيح الواجبات.");
+      const submissionId = required(action.formData, "submission_id");
+      const submission = (state.data?.submissions ?? []).find((item) => item.id === submissionId);
+      if (!submission) throw new Error("التسليم غير موجود في نطاق صلاحياتك الحالية.");
+      const assignment = (state.data?.assignments ?? []).find((item) => item.id === submission.assignment_id);
+      if (!assignment) throw new Error("الواجب غير موجود في نطاق الفصل الحالي.");
+      if (!["submitted","late","returned","graded"].includes(submission.status)) {
+        throw new Error("لا يمكن تصحيح تسليم لم يتم إرساله.");
+      }
+      const scoreText = required(action.formData, "score");
+      const score = Number(scoreText);
+      const maxScore = assignment.max_score == null ? null : Number(assignment.max_score);
+      if (!Number.isFinite(score) || score < 0 || (maxScore !== null && score > maxScore)) {
+        throw new Error(maxScore === null ? "أدخل درجة صحيحة لا تقل عن صفر." : `الدرجة يجب أن تكون بين صفر و${maxScore}.`);
+      }
+      const feedback = optional(action.formData, "feedback");
+      await mutation(
+        supabase.from("assignment_submissions").update({
+          score,
+          feedback,
+          status: "graded",
+          graded_by: state.user.id,
+          graded_at: new Date().toISOString(),
+        }).eq("id", submission.id),
+        "تصحيح الواجب",
+      );
       break;
     }
     case "submit-assignment": {
