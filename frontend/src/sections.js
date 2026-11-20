@@ -191,23 +191,54 @@ export function renderExams(data, context, permissions) {
 }
 
 export function renderContent(data, context, permissions) {
-  const rows=data.rows.map((item)=>`<tr><td><strong>${esc(item.title)}</strong><small>${esc(item.summary||"")}</small></td><td>${esc(item.resource_type)}</td><td>${badge(item.status)}</td><td>${dateText(item.published_at)}</td><td>${dateText(item.updated_at)}</td><td>${permissions.has("content.manage")&&item.status==="draft"?`<button class="button button-small button-secondary" data-action="publish-content" data-id="${esc(item.id)}">نشر</button>`:""}</td></tr>`);
+  const rows=data.rows.map((item)=>`<tr>
+    <td><strong>${esc(item.title)}</strong><small>${esc(item.summary||"")}</small></td>
+    <td>${esc(item.resource_type)}</td>
+    <td>${badge(item.status)}</td>
+    <td>${dateText(item.published_at)}</td>
+    <td>${dateText(item.updated_at)}</td>
+    <td class="table-actions">
+      ${item.status==="published" || permissions.has("content.manage")
+        ? `<button class="button button-small button-secondary" data-action="open-content" data-id="${esc(item.id)}">فتح الدرس</button>`
+        : ""}
+      ${permissions.has("content.manage")&&item.status==="draft"
+        ? `<button class="button button-small button-secondary" data-action="publish-content" data-id="${esc(item.id)}">نشر</button>`
+        : ""}
+    </td>
+  </tr>`);
   const classes=data.classes??[];
   const subjects=data.subjects??[];
   const form=permissions.has("content.manage")?`
     <form class="form-grid compact-form" data-form="create-content">
       ${schoolField(context,data.schools)}
       <label class="field"><span>العنوان</span><input name="title" required maxlength="180"/></label>
-      <label class="field"><span>نوع المورد</span><input name="resource_type" required maxlength="80" placeholder="نوع المحتوى كما تعتمدونه"/></label>
+      <label class="field"><span>نوع المورد</span><input name="resource_type" required maxlength="80" placeholder="درس، ملخص، ورقة عمل..."/></label>
       <label class="field"><span>الفصل (اختياري)</span><select name="class_id"><option value="">كل المدرسة</option>${selectOptions(classes,(x)=>x.name)}</select></label>
       <label class="field"><span>المادة (اختياري)</span><select name="subject_id"><option value="">بدون تحديد مادة</option>${selectOptions(subjects,(x)=>x.name)}</select></label>
       <label class="field field-wide"><span>ملخص</span><textarea name="summary" rows="2" maxlength="1000"></textarea></label>
-      <label class="field field-wide"><span>المحتوى</span><textarea name="body" rows="6" required maxlength="30000"></textarea></label>
+      <label class="field field-wide"><span>نص الدرس</span><textarea name="body" rows="8" required maxlength="30000"></textarea></label>
       <div class="form-actions"><button class="button button-primary" type="submit">حفظ كمسودة</button></div>
     </form>`:"";
-  return heading("المحتوى التعليمي","المصادر والمنشورات التعليمية الموجودة فعلًا في مساحة المدرسة.",permissions.has("content.manage")?`<button class="button button-secondary" data-action="toggle-form" data-target="content-create-form">إضافة محتوى</button>`:"")
+  const selected=data.selectedContent;
+  const reader=selected?`
+    <article class="panel lesson-reader">
+      <div class="panel-heading">
+        <div><span class="eyebrow">${esc(selected.resource_type||"محتوى تعليمي")}</span><h2>${esc(selected.title)}</h2>
+          ${selected.summary?`<p>${esc(selected.summary)}</p>`:""}
+        </div>
+        <button class="button button-secondary" data-action="close-content">العودة للمحتوى</button>
+      </div>
+      <div class="lesson-reader-body">${esc(selected.body||"لا يوجد نص للدرس.")}</div>
+      <div class="lesson-reader-meta"><span>${badge(selected.status)}</span><small>آخر تحديث: ${dateText(selected.updated_at)}</small></div>
+    </article>`:"";
+  return heading(
+    "المحتوى التعليمي",
+    "افتح الدروس المنشورة واقرأ نصها الكامل داخل المنصة.",
+    permissions.has("content.manage")?`<button class="button button-secondary" data-action="toggle-form" data-target="content-create-form">إضافة محتوى</button>`:""
+  )
+    + (reader || "")
     + (permissions.has("content.manage")?formPanel("content-create-form",form):"")
-    + table(["العنوان","النوع","الحالة","تاريخ النشر","آخر تحديث","إجراء"],rows,"لا يوجد محتوى مسجل أو منشور في هذا النطاق.");
+    + (reader?"":table(["العنوان","النوع","الحالة","تاريخ النشر","آخر تحديث","إجراء"],rows,"لا يوجد محتوى منشور أو مسجل في هذا النطاق."));
 }
 
 export function renderSupport(data, context, permissions) {
