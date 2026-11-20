@@ -1110,36 +1110,45 @@ function renderAttendance(data) {
 }
 
 function renderAssignments(data) {
-  const classMap = new Map(data.classes.map((item) => [item.id,item.name]));
-  const subjectMap = new Map(data.subjects.map((item) => [item.id,item.name]));
-  const rowsHtml = data.assignments.map((assignment) => {
+  const classMap = new Map((data.classes??[]).map((item) => [item.id,item.name]));
+  const subjectMap = new Map((data.subjects??[]).map((item) => [item.id,item.name]));
+  const ownStudentIds = new Set((data.ownStudents??[]).map((item)=>item.id));
+  const ownSubmissions = (data.submissions??[]).filter((row)=>ownStudentIds.has(row.student_id));
+  const submittedAssignmentIds = new Set(ownSubmissions.map((row)=>row.assignment_id));
+  const rowsHtml = (data.assignments??[]).map((assignment) => {
     const publish = has("assignments.manage") && assignment.status === "draft"
       ? `<button class="button button-small button-secondary" data-action="publish-assignment" data-id="${esc(assignment.id)}">نشر</button>` : "";
-    const submissions = data.submissions.filter((row) => row.assignment_id === assignment.id);
+    const submissions = (data.submissions??[]).filter((row) => row.assignment_id === assignment.id);
     return `<tr><td><strong>${esc(assignment.title)}</strong><small>${esc(assignment.instructions)}</small></td><td>${esc(classMap.get(assignment.class_id) || "—")}</td><td>${esc(subjectMap.get(assignment.subject_id) || "—")}</td><td>${dateText(assignment.due_at)}</td><td>${badge(assignment.status)}</td><td>${submissions.length}</td><td>${publish}</td></tr>`;
   });
   const canManage = has("assignments.manage") && state.context.tenantId;
   const createForm = canManage ? `
     <form class="form-grid compact-form" data-form="create-assignment">
       ${state.context.schoolId ? "" : `<label class="field"><span>المدرسة</span><select name="school_id" required><option value="">اختر مدرسة</option>${schoolOptions()}</select></label>`}
-      <label class="field"><span>الفصل</span><select name="class_id" required><option value="">اختر فصلًا</option>${data.classes.map((row) => `<option value="${esc(row.id)}" data-school-id="${esc(row.school_id)}">${esc(row.name)}</option>`).join("")}</select></label>
-      <label class="field"><span>المادة</span><select name="subject_id" required><option value="">اختر مادة</option>${data.subjects.map((row) => `<option value="${esc(row.id)}" data-school-id="${esc(row.school_id)}">${esc(row.name)}</option>`).join("")}</select></label>
+      <label class="field"><span>الفصل</span><select name="class_id" required><option value="">اختر فصلًا</option>${(data.classes??[]).map((row) => `<option value="${esc(row.id)}" data-school-id="${esc(row.school_id)}">${esc(row.name)}</option>`).join("")}</select></label>
+      <label class="field"><span>المادة</span><select name="subject_id" required><option value="">اختر مادة</option>${(data.subjects??[]).map((row) => `<option value="${esc(row.id)}" data-school-id="${esc(row.school_id)}">${esc(row.name)}</option>`).join("")}</select></label>
       <label class="field"><span>عنوان الواجب</span><input name="title" required maxlength="180"/></label>
       <label class="field"><span>موعد التسليم</span><input name="due_at" type="datetime-local"/></label>
       <label class="field"><span>الدرجة القصوى</span><input name="max_score" type="number" min="0" step="0.01"/></label>
       <label class="field field-wide"><span>التعليمات</span><textarea name="instructions" rows="3" maxlength="6000"></textarea></label>
       <label class="check-field"><input type="checkbox" name="allow_late_submission"/><span>السماح بالتسليم المتأخر</span></label>
-      <div class="form-actions"><button class="button button-primary" type="submit" ${!data.classes.length || !data.subjects.length ? "disabled" : ""}>حفظ كمسودة</button></div>
+      <div class="form-actions"><button class="button button-primary" type="submit" ${!(data.classes??[]).length || !(data.subjects??[]).length ? "disabled" : ""}>حفظ كمسودة</button></div>
     </form>` : "";
-  const studentForm = has("assignments.submit") && data.ownStudents.length
-    ? `<section class="panel"><h3>تسليم واجب</h3><form class="form-grid compact-form" data-form="submit-assignment"><label class="field"><span>سجلك الدراسي</span><select name="student_id" required><option value="">اختر سجلّك</option>${data.ownStudents.map((item) => `<option value="${esc(item.id)}">${esc([item.first_name,item.middle_name,item.last_name].filter(Boolean).join(" "))} — ${esc(item.student_number)}</option>`).join("")}</select></label><label class="field"><span>الواجب المنشور</span><select name="assignment_id" required><option value="">اختر واجبًا</option>${data.assignments.filter((item) => item.status === "published").map((item) => `<option value="${esc(item.id)}">${esc(item.title)}</option>`).join("")}</select></label><label class="field field-wide"><span>إجابتك</span><textarea name="submission_text" rows="4" required maxlength="12000"></textarea></label><div class="form-actions"><button class="button button-primary" type="submit">إرسال الإجابة</button></div></form></section>`
+  const availableAssignments=(data.assignments??[]).filter((item)=>item.status==="published" && !submittedAssignmentIds.has(item.id));
+  const studentForm = has("assignments.submit") && ownStudentIds.size
+    ? (availableAssignments.length
+      ? `<section class="panel"><h3>تسليم واجب</h3><form class="form-grid compact-form" data-form="submit-assignment"><label class="field"><span>سجلك الدراسي</span><select name="student_id" required><option value="">اختر سجلّك</option>${(data.ownStudents??[]).map((item) => `<option value="${esc(item.id)}">${esc([item.first_name,item.middle_name,item.last_name].filter(Boolean).join(" "))} — ${esc(item.student_number)}</option>`).join("")}</select></label><label class="field"><span>الواجب المنشور</span><select name="assignment_id" required><option value="">اختر واجبًا</option>${availableAssignments.map((item) => `<option value="${esc(item.id)}">${esc(item.title)}</option>`).join("")}</select></label><label class="field field-wide"><span>إجابتك</span><textarea name="submission_text" rows="4" required maxlength="12000"></textarea></label><div class="form-actions"><button class="button button-primary" type="submit">إرسال الإجابة</button></div></form></section>`
+      : `<div class="info-banner">لا توجد واجبات منشورة غير مسلّمة حاليًا. يمكنك مراجعة سجل تسليماتك بالأسفل.</div>`)
     : "";
-  const submissionsPanel = has("assignments.manage") && data.submissions.length
-    ? `<section class="panel"><div class="panel-heading"><div><h3>تسليمات الطلاب</h3><p>الدرجات والتعليقات المسجلة على التسليمات.</p></div></div>${table(["الواجب","الحالة","تاريخ التسليم","الدرجة","تعليق المعلم"],data.submissions.map((item) => `<tr><td>${esc(data.assignments.find((a) => a.id === item.assignment_id)?.title || "—")}</td><td>${badge(item.status)}</td><td>${dateText(item.submitted_at)}</td><td>${item.score ?? "—"}</td><td>${esc(item.feedback || "—")}</td></tr>`))}</section>` : "";
-  return sectionHead("الواجبات", "الواجبات المسجلة وتسليمات الطلاب.", canManage ? `<button class="button button-secondary" data-action="toggle-form" data-target="assignment-create-form">إنشاء واجب</button>` : "")
+  const submissionsPanel = canManage && (data.submissions??[]).length
+    ? `<section class="panel"><div class="panel-heading"><div><h3>تسليمات الطلاب</h3><p>الدرجات والتعليقات المسجلة على التسليمات.</p></div></div>${table(["الواجب","الحالة","تاريخ التسليم","الدرجة","تعليق المعلم"],(data.submissions??[]).map((item) => `<tr><td>${esc((data.assignments??[]).find((a) => a.id === item.assignment_id)?.title || "—")}</td><td>${badge(item.status)}</td><td>${dateText(item.submitted_at)}</td><td>${item.score ?? "—"}</td><td>${esc(item.feedback || "—")}</td></tr>`))}</section>` : "";
+  const ownSubmissionsPanel = has("assignments.submit") && ownSubmissions.length
+    ? `<section class="panel"><div class="panel-heading"><div><h3>سجل تسليماتك</h3><p>راجع حالة كل إجابة وتعليق المعلم والدرجة عند نشرها.</p></div></div>${table(["الواجب","الحالة","تاريخ التسليم","الدرجة","تعليق المعلم"],ownSubmissions.map((item)=>`<tr><td>${esc((data.assignments??[]).find((a)=>a.id===item.assignment_id)?.title||"واجب")}</td><td>${badge(item.status)}</td><td>${dateText(item.submitted_at)}</td><td>${item.score??"—"}</td><td>${esc(item.feedback||"—")}</td></tr>`))}</section>` : "";
+  return sectionHead("الواجبات", "الواجبات المنشورة والمسودات وتسليمات الطلاب.", canManage ? `<button class="button button-secondary" data-action="toggle-form" data-target="assignment-create-form">إنشاء واجب</button>` : "")
     + (canManage ? `<section id="assignment-create-form" class="panel form-panel hidden">${createForm}</section>` : "")
     + studentForm
     + table(["الواجب","الفصل","المادة","موعد التسليم","الحالة","عدد التسليمات","إجراء"], rowsHtml, "لا توجد واجبات مسجلة في هذا النطاق.")
+    + ownSubmissionsPanel
     + submissionsPanel;
 }
 
