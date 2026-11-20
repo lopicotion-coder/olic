@@ -1165,11 +1165,129 @@ async function forgotPassword() {
   render();
 }
 
+async function callSchoolOnboarding(payload) {
+  const { data, error } = await supabase.functions.invoke("school-onboarding", { body: payload });
+  if (error) {
+    let message = error.message || "تعذّر تنفيذ عملية إدارة الحسابات.";
+    const response = error.context;
+    if (response && typeof response.json === "function") {
+      try {
+        const body = await response.json();
+        if (body?.error) message = body.error;
+      } catch {
+        // Keep the safe SDK message if the response body is not JSON.
+      }
+    }
+    throw new Error(message);
+  }
+  if (!data?.ok) throw new Error(data?.error || "تعذّر تنفيذ عملية إدارة الحسابات.");
+  return data;
+}
+
 async function perform(action) {
   const ctx = state.context;
   switch (action.type) {
+    case "create-tenant": {
+      if (!has("platform.tenants.manage")) throw new Error("إنشاء المؤسسات متاح لمسؤولي المنصة فقط.");
+      await callSchoolOnboarding({
+        action: "create_tenant",
+        tenant: {
+          legal_name: required(action.formData, "legal_name"),
+          display_name: required(action.formData, "display_name"),
+          slug: required(action.formData, "slug").toLowerCase(),
+        },
+        owner: {
+          email: required(action.formData, "owner_email"),
+          display_name: required(action.formData, "owner_display_name"),
+        },
+      });
+      break;
+    }
     case "create-school": {
-      throw new Error("إنشاء المدرسة متوقف حتى تجهيز دعوة مالك المدرسة وتسجيل عضويته ودوره في عملية آمنة واحدة.");
+      const platformManager = has("platform.schools.manage");
+      const tenantManager = has("schools.manage") && ctx.scope === "tenant";
+      if (!platformManager && !tenantManager) throw new Error("إنشاء المدارس يتطلب صلاحية على مستوى المؤسسة أو المنصة.");
+      const tenantId = ctx.tenantId || required(action.formData, "tenant_id");
+      await callSchoolOnboarding({
+        action: "create_school",
+        tenant_id: tenantId,
+        school: {
+          name: required(action.formData, "name"),
+          slug: required(action.formData, "slug").toLowerCase(),
+          code: optional(action.formData, "code") || null,
+          default_locale: "ar",
+          timezone: "Africa/Cairo",
+        },
+        owner: {
+          email: required(action.formData, "owner_email"),
+          display_name: required(action.formData, "owner_display_name"),
+        },
+      });
+      break;
+    }
+    case "invite-student": {
+      if (!has("students.manage")) throw new Error("لا تملك صلاحية دعوة الطلاب.");
+      const schoolId = ctx.schoolId || required(action.formData, "school_id");
+      const classIds = action.formData.getAll("class_ids").map((value) => String(value).trim()).filter(Boolean);
+      if (!classIds.length) throw new Error("اختر فصلًا واحدًا على الأقل.");
+      await callSchoolOnboarding({
+        action: "invite_member",
+        tenant_id: ctx.tenantId,
+        school_id: schoolId,
+        role_key: "student",
+        email: required(action.formData, "email"),
+        class_ids: classIds,
+        roster: {
+          first_name: required(action.formData, "first_name"),
+          last_name: required(action.formData, "last_name"),
+          student_number: required(action.formData, "student_number"),
+          date_of_birth: optional(action.formData, "date_of_birth") || null,
+          admission_date: optional(action.formData, "admission_date") || null,
+        },
+      });
+      break;
+    }
+    case "invite-teacher": {
+      if (!has("teachers.manage")) throw new Error("لا تملك صلاحية دعوة المعلمين.");
+      const schoolId = ctx.schoolId || required(action.formData, "school_id");
+      const classIds = action.formData.getAll("class_ids").map((value) => String(value).trim()).filter(Boolean);
+      if (!classIds.length) throw new Error("اختر فصلًا واحدًا على الأقل.");
+      await callSchoolOnboarding({
+        action: "invite_member",
+        tenant_id: ctx.tenantId,
+        school_id: schoolId,
+        role_key: "teacher",
+        email: required(action.formData, "email"),
+        class_ids: classIds,
+        roster: {
+          first_name: required(action.formData, "first_name"),
+          last_name: required(action.formData, "last_name"),
+          employee_number: optional(action.formData, "employee_number") || null,
+          phone: optional(action.formData, "phone") || null,
+        },
+      });
+      break;
+    }
+    case "invite-parent": {
+      if (!has("students.manage")) throw new Error("دعوة ولي الأمر تتطلب صلاحية إدارة الطلاب.");
+      const schoolId = ctx.schoolId || required(action.formData, "school_id");
+      const studentIds = action.formData.getAll("student_ids").map((value) => String(value).trim()).filter(Boolean);
+      if (!studentIds.length) throw new Error("اختر طالبًا واحدًا على الأقل لربطه بولي الأمر.");
+      await callSchoolOnboarding({
+        action: "invite_member",
+        tenant_id: ctx.tenantId,
+        school_id: schoolId,
+        role_key: "parent",
+        email: required(action.formData, "email"),
+        student_ids: studentIds,
+        roster: {
+          first_name: required(action.formData, "first_name"),
+          last_name: required(action.formData, "last_name"),
+          relationship: required(action.formData, "relationship"),
+          is_primary: action.formData.get("is_primary") === "on",
+        },
+      });
+      break;
     }
     case "save-school-subject-policy": {
       throw new Error("إعدادات اللغة والمناهج لكل مادة غير متاحة حتى إضافة جدولها ومراجعة RLS وترحيلها بأمان.");
