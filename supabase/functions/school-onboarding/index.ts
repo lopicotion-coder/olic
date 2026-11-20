@@ -216,7 +216,9 @@ async function inviteAuthUser(
 
   if (!APP_REDIRECT_URL) fail(503, "APP_REDIRECT_URL_REQUIRED_FOR_INVITATIONS");
   const options: { data: Record<string, unknown>; redirectTo?: string } = {
-    data: { display_name: displayName },
+    // UX-only marker: the browser requires the invitee to set a password.
+    // This user-editable metadata is never used for authorization.
+    data: { display_name: displayName, myschool_invite: true },
   };
   let redirect: URL;
   try {
