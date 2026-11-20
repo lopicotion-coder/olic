@@ -140,3 +140,18 @@ Deno.test("school administrators cannot grant another school-owner or school-adm
   assertEquals(canInviteSchoolRole(tenantOwner, "school_admin", "tenant-1", "school-1"), true);
   assertEquals(canInviteSchoolRole(tenantOwner, "school_owner", "tenant-1", "school-1"), true);
 });
+
+Deno.test("student invitations require an active class enrollment request", () => {
+  assertThrows(() => validateRosterPayload(
+    "student",
+    { student_number: "S-001", first_name: "A", last_name: "B" },
+    [],
+    [],
+  ), Error, "STUDENT_REQUIRES_CLASS_ENROLLMENT");
+  validateRosterPayload(
+    "student",
+    { student_number: "S-001", first_name: "A", last_name: "B" },
+    ["11111111-1111-4111-8111-111111111111"],
+    [],
+  );
+});
