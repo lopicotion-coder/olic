@@ -209,12 +209,19 @@ export function renderLearningDashboard(data) {
   const lessonRows=(data.lessons??[]).map((item)=>`<tr><td><strong>${esc(item.title)}</strong><small>${esc(item.summary||"")}</small></td><td>${esc(item.resource_type||"درس")}</td><td>${dateLabel(item.published_at)}</td><td><button class="button button-small button-primary" data-action="open-learning-lesson" data-id="${esc(item.id)}">ابدأ التعلم</button></td></tr>`);
   const submissionByPair=new Map((data.submissions??[]).map((item)=>[`${item.student_id}|${item.assignment_id}`,item]));
   const assignmentRows=(data.assignments??[]).map((item)=>{
-    const studentNames=(data.students??[]).map((student)=>student.first_name).join(", ");
-    const relevant=(data.students??[]).map((student)=>submissionByPair.get(`${student.id}|${item.id}`)).filter(Boolean);
-    const submitted=relevant.length>0;
-    return `<tr><td><strong>${esc(item.title)}</strong><small>${esc(item.instructions||"")}</small></td><td>${dateLabel(item.due_at)}</td><td>${submitted?status(relevant[0].status):status("pending")}</td><td><button class="button button-small button-secondary" data-action="open-learning-assignments">فتح الواجبات</button></td></tr>`;
+    const enrolledForAssignment=(data.enrollments??[]).filter((enrollment)=>enrollment.class_id===item.class_id);
+    const perStudent=enrolledForAssignment.map((enrollment)=>{
+      const student=(data.students??[]).find((row)=>row.id===enrollment.student_id);
+      const submission=submissionByPair.get(`${enrollment.student_id}|${item.id}`);
+      const name=student?[student.first_name,student.middle_name,student.last_name].filter(Boolean).join(" "):"الطالب";
+      return `${name}: ${submission?submission.status:"لم يسلّم بعد"}`;
+    });
+    const submissionLabel=perStudent.length?perStudent.join(" · "):"لا يوجد تسجيل نشط";
+    return `<tr><td><strong>${esc(item.title)}</strong><small>${esc(item.instructions||"")}</small></td><td>${dateLabel(item.due_at)}</td><td>${esc(submissionLabel)}</td><td><button class="button button-small button-secondary" data-action="open-learning-assignments">فتح الواجبات</button></td></tr>`;
   });
-  const gradeRows=(data.grades??[]).map((item)=>`<tr><td>${esc(item.assessment_title)}</td><td>${esc(item.score)}</td><td>${item.max_score==null?"—":esc(item.max_score)}</td><td>${dateLabel(item.published_at)}</td></tr>`);
+  const showStudentColumn=(data.students??[]).length>1;
+  const gradeHeaders=showStudentColumn?["الطالب","التقييم","الدرجة","الدرجة القصوى","تاريخ النشر"]:["التقييم","الدرجة","الدرجة القصوى","تاريخ النشر"];
+  const gradeRows=(data.grades??[]).map((item)=>`<tr>${showStudentColumn?`<td>${esc(item.student_name||"الطالب")}</td>`:""}<td>${esc(item.assessment_title)}</td><td>${esc(item.score)}</td><td>${item.max_score==null?"—":esc(item.max_score)}</td><td>${dateLabel(item.published_at)}</td></tr>`);
   const adaptiveNotice=data.adaptiveUnavailable
     ? empty("التدريب التكيفي غير متاح على قاعدة الإنتاج الحالية.","يمكنك قراءة الدروس المنشورة وتسليم الواجبات ومراجعة الدرجات. سيظهر التدريب التكيفي بعد اعتماد ترحيلات التعلم واختبارها.")
     : "";
@@ -222,7 +229,7 @@ export function renderLearningDashboard(data) {
     ${panel("فصولك الدراسية",table(["الفصل","الصف","السنة الدراسية","الحالة"],classRows,"لا توجد تسجيلات نشطة في فصول دراسية بعد."))}
     ${panel("الدروس المتاحة",table(["الدرس","النوع","تاريخ النشر","إجراء"],lessonRows,"لم تنشر المدرسة دروسًا متاحة لهذا الحساب بعد."))}
     ${panel("الواجبات القادمة",table(["الواجب","موعد التسليم","حالة التسليم","إجراء"],assignmentRows,"لا توجد واجبات منشورة لهذه الفصول حاليًا."))}
-    ${panel("آخر الدرجات المنشورة",table(["التقييم","درجتك","الدرجة القصوى","تاريخ النشر"],gradeRows,"لا توجد درجات منشورة لهذا الحساب بعد."))}
+    ${panel("آخر الدرجات المنشورة",table(gradeHeaders,gradeRows,"لا توجد درجات منشورة لهذا الحساب بعد."))}
     ${adaptiveNotice}
   `;
   const masteryRows=(data.mastery??[]).map((row)=>{
