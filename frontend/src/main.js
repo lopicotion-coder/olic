@@ -1506,9 +1506,17 @@ root.addEventListener("click", async (event) => {
     } else if (type === "close-attendance") {
       state.selectedAttendanceSessionId = "";
       await loadSection();
-    } else if (type === "mark-notification" || type === "publish-assignment") {
+    } else if (["mark-notification","publish-assignment","publish-timetable","schedule-exam","publish-content","resolve-ticket"].includes(type)) {
       await perform({ type, id: button.dataset.id });
-      showToast(type === "mark-notification" ? "تم تحديث حالة الإشعار." : "تم نشر الواجب.");
+      const messages = {
+        "mark-notification":"تم تحديث حالة الإشعار.",
+        "publish-assignment":"تم نشر الواجب.",
+        "publish-timetable":"تم نشر الحصة في الجدول.",
+        "schedule-exam":"تمت جدولة الامتحان.",
+        "publish-content":"تم نشر المحتوى.",
+        "resolve-ticket":"تم تحديث طلب الدعم إلى تم الحل.",
+      };
+      showToast(messages[type] || "تم تنفيذ الإجراء.");
       await loadSection();
     } else if (type === "toggle-sidebar") {
       document.querySelector("#sidebar")?.classList.toggle("sidebar-open");
@@ -1534,12 +1542,12 @@ root.addEventListener("change", async (event) => {
   const form = event.target.closest("form");
   if (event.target.name === "school_id" && form) {
     const schoolId = event.target.value;
-    for (const dependentName of ["class_id", "subject_id"]) {
+    for (const dependentName of ["class_id", "subject_id", "teacher_id", "academic_year_id", "fee_plan_id", "student_id"]) {
       const dependent = form.querySelector(`select[name="${dependentName}"]`);
       if (!dependent) continue;
       const previous = dependent.value;
       for (const option of dependent.options) {
-        if (!option.value) continue;
+        if (!option.value || !option.dataset.schoolId) continue;
         const belongs = option.dataset.schoolId === schoolId;
         option.hidden = Boolean(schoolId && !belongs);
         option.disabled = Boolean(schoolId && !belongs);
@@ -1548,13 +1556,13 @@ root.addEventListener("change", async (event) => {
     }
   }
 
-  if (event.target.name === "assessment_id" && form) {
+  if (["assessment_id","exam_session_id"].includes(event.target.name) && form) {
     const selected = event.target.selectedOptions[0];
     const schoolId = selected?.dataset.schoolId || "";
     const studentSelect = form.querySelector('select[name="student_id"]');
     if (studentSelect && schoolId) {
       for (const option of studentSelect.options) {
-        if (!option.value) continue;
+        if (!option.value || !option.dataset.schoolId) continue;
         const belongs = option.dataset.schoolId === schoolId;
         option.hidden = !belongs;
         option.disabled = !belongs;
