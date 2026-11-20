@@ -2179,6 +2179,14 @@ root.addEventListener("click", async (event) => {
     } else if (type === "open-content") {
       state.selectedContentId = button.dataset.id;
       await loadSection();
+    } else if (type === "open-learning-lesson") {
+      state.section = "content";
+      state.selectedContentId = button.dataset.id;
+      await loadSection();
+    } else if (type === "open-learning-assignments") {
+      state.section = "assignments";
+      state.selectedContentId = "";
+      await loadSection();
     } else if (type === "close-content") {
       state.selectedContentId = "";
       await loadSection();
