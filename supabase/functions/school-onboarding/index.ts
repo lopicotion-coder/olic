@@ -433,11 +433,17 @@ async function rollback(
   const userId = state.userId;
   if (userId) {
     await bestEffort("remove audit rows", () =>
-      admin.from("audit_logs").delete().eq("entity_id", userId).eq("request_id", requestId));
+      admin.from("audit_logs").delete().eq("request_id", requestId));
     await bestEffort("remove student guardian links", async () => {
       const guardian = await admin.from("guardians").select("id").eq("profile_id", userId).maybeSingle();
       if (guardian.data?.id) {
         return await admin.from("student_guardians").delete().eq("guardian_id", guardian.data.id);
+      }
+    });
+    await bestEffort("remove student enrollments", async () => {
+      const student = await admin.from("students").select("id").eq("profile_id", userId).maybeSingle();
+      if (student.data?.id) {
+        return await admin.from("student_enrollments").delete().eq("student_id", student.data.id);
       }
     });
     await bestEffort("remove student roster", () => admin.from("students").delete().eq("profile_id", userId));
@@ -627,7 +633,7 @@ async function createSchool(
     state.schoolId = created.id;
     const owner = await provisionUser(
       admin, requestId, actorId, tenantId, created.id, "school_owner", email,
-      ownerName, {}, [], [], state,
+      ownerName, {}, [], [], [], state,
     );
     await writeAudit(admin, requestId, actorId, "school.created", "school", created.id, tenantId, created.id, {
       owner_user_id: owner.userId,
