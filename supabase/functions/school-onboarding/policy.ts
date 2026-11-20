@@ -25,6 +25,8 @@ export type ActorAuthorizationContext = {
   schoolMemberships: SchoolMembershipState[];
 };
 
+export type SchoolRoleScope = "tenant" | "school" | "class";
+
 export type SchoolRoleKey =
   | "school_admin"
   | "school_owner"
@@ -33,7 +35,7 @@ export type SchoolRoleKey =
   | "student"
   | "parent";
 
-const SCHOOL_ROLE_SCOPES: Record<SchoolRoleKey, RoleScope> = {
+const SCHOOL_ROLE_SCOPES: Record<SchoolRoleKey, SchoolRoleScope> = {
   school_admin: "school",
   school_owner: "school",
   supervisor: "school",
@@ -70,7 +72,7 @@ export function normalizeSchoolRole(value: unknown): SchoolRoleKey {
   return role as SchoolRoleKey;
 }
 
-export function schoolRoleScope(role: SchoolRoleKey): RoleScope {
+export function schoolRoleScope(role: SchoolRoleKey): SchoolRoleScope {
   return SCHOOL_ROLE_SCOPES[role];
 }
 
