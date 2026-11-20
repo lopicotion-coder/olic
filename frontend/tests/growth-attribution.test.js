@@ -32,7 +32,7 @@ test("captures only allow-listed campaign fields and a route key", () => {
 
   assert.deepEqual(touch, {
     capturedAt: "2026-11-20T12:00:00.000Z",
-    pageKey: "student/pricingemailprivate",
+    pageKey: "student/pricing",
     source: "teacher",
     medium: "video",
     campaign: "november",
