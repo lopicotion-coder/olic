@@ -1292,9 +1292,11 @@ async function perform(action) {
       const schoolId = ctx.schoolId || required(action.formData, "school_id");
       const roleKey = required(action.formData, "role_key");
       if (!["school_admin", "supervisor"].includes(roleKey)) throw new Error("الدور المختار غير مسموح.");
+      const schoolRow = (state.data?.rows ?? []).find((item) => item.id === schoolId);
+      if (!schoolRow) throw new Error("المدرسة المختارة غير متاحة في هذا النطاق.");
       await callSchoolOnboarding({
         action: "invite_member",
-        tenant_id: ctx.tenantId || required(action.formData, "tenant_id"),
+        tenant_id: ctx.tenantId || schoolRow.tenant_id,
         school_id: schoolId,
         role_key: roleKey,
         email: required(action.formData, "email"),
@@ -2087,7 +2089,8 @@ root.addEventListener("submit", async (event) => {
   if (submit) submit.disabled = true;
   try {
     await perform({ type, formData: new FormData(form) });
-    showToast("تم حفظ التغيير في قاعدة البيانات.");
+    const invitationTypes = ["create-tenant", "create-school", "invite-student", "invite-teacher", "invite-parent", "invite-school-manager"];
+    showToast(invitationTypes.includes(type) ? "تم إنشاء الحساب وإرسال الدعوة عبر البريد." : "تم حفظ التغيير في قاعدة البيانات.");
     if (["create-tenant", "create-school"].includes(type)) await refreshAccess();
     else await loadSection();
   } catch (error) {
