@@ -25,6 +25,8 @@ const STATUS_LABELS = {
   draft: "مسودة",
   published: "منشور",
   closed: "مغلق",
+  read: "مقروء",
+  unread: "غير مقروء",
   submitted: "تم التسليم",
   late: "متأخر",
   graded: "تم التصحيح",
@@ -37,7 +39,6 @@ const STATUS_LABELS = {
   in_progress: "قيد المعالجة",
   waiting: "بانتظار رد",
   resolved: "تم الحل",
-  closed: "مغلق",
   scheduled: "مجدول",
   completed: "مكتمل",
   cancelled: "ملغي",
@@ -73,7 +74,9 @@ const NAV_LABELS = {
 const NAV_ICONS = {
   overview: "◫", tenants: "▦", schools: "⌂", students: "♙", teachers: "♟",
   classes: "▤", attendance: "◷", assignments: "✓", grades: "▥", messages: "✉",
-  notifications: "♧", billing: "¤", questions: "◇", profile: "◎",
+  notifications: "♧", billing: "¤", questions: "◇",
+  fees: "¤", timetable: "◷", exams: "▦", content: "▤", support: "?",
+  profile: "◎",
 };
 const ATTENDANCE_VALUES = ["present", "absent", "late", "excused"];
 const CONVERSATION_SCOPES = ["school", "class"];
@@ -369,7 +372,7 @@ function renderSection() {
     case "timetable": return renderTimetable(data, state.context, { has });
     case "exams": return renderExams(data, state.context, { has });
     case "content": return renderContent(data, state.context, { has });
-    case "support": return renderSupport(data, state.context, { has }, state.user.id);
+    case "support": return renderSupport(data, state.context, { has });
     case "questions": return renderQuestions(data);
     case "profile": return renderProfile(data);
     default: return emptyState("هذا القسم غير متاح في السياق الحالي.");
@@ -1450,15 +1453,17 @@ async function perform(action) {
       if (!(has("support.create") || has("support.manage"))) throw new Error("لا تملك صلاحية إنشاء طلب دعم.");
       if (!ctx.tenantId) throw new Error("اختر سياق مؤسسة لفتح طلب الدعم.");
       const schoolId = selectedSchoolId(action.formData);
-      if (!schoolId) throw new Error("اختر المدرسة المرتبطة بطلب الدعم.");
+      if (schoolId && !state.access.schools.some((school) => school.id === schoolId && school.tenant_id === ctx.tenantId)) {
+        throw new Error("المدرسة المختارة خارج المؤسسات المسموح بها لحسابك.");
+      }
       const payload = {
-        tenant_id: ctx.tenantId, school_id: schoolId,
+        tenant_id: ctx.tenantId, school_id: schoolId || null,
         created_by: state.user.id, created_for_user_id: state.user.id,
         title: required(action.formData,"title"),
         category: required(action.formData,"category"),
         description: required(action.formData,"description"),
         priority: required(action.formData,"priority"),
-        status: "open", source: "web",
+        status: "open",
       };
       await mutation(supabase.from("support_tickets").insert(payload), "إرسال طلب الدعم");
       break;
