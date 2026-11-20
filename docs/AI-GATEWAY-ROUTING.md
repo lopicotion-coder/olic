@@ -14,7 +14,7 @@ The selected provider and model come from the enabled `ai_provider_routes` row f
 
 Configure these in Supabase Edge Function Secrets (project-level):
 
-- `OPENAI_API_KEY` — used by the Gateway for OpenAI chat routes and by the Worker for the existing OpenAI embeddings path.
+- `OPENAI_API_KEY` — used only by the Gateway for OpenAI chat routes and the `text-embedding-3-small` embeddings route.
 - `OPENROUTER_API_KEY` — used only by the Gateway for OpenRouter routes.
 - `GEMINI_API_KEY` — used only by the Gateway for Gemini routes.
 - `AI_GATEWAY_INTERNAL_TOKEN` — a random secret of at least 32 characters. The Worker sends it only in the server-to-server `x-gateway-token` header; the Gateway compares it in constant time.
@@ -24,8 +24,9 @@ The existing Supabase service-role credential is used only by the Worker to call
 
 Optional:
 
-- `AI_GATEWAY_URL` — override the internal endpoint. When omitted, the Worker derives `SUPABASE_URL/functions/v1/ai-gateway/v1/chat/completions`.
-- `AI_GATEWAY_ALLOWED_MODELS_OPENAI`, `AI_GATEWAY_ALLOWED_MODELS_GEMINI`, `AI_GATEWAY_ALLOWED_MODELS_OPENROUTER` — comma-separated exact model IDs allowed for each provider. The fallback allowlist is limited to the Gateway's single default model for that provider.
+- `AI_GATEWAY_URL` — optional base URL of the `ai-gateway` Edge Function (for example `https://<project-ref>.supabase.co/functions/v1/ai-gateway`). When omitted, the Worker derives it from `SUPABASE_URL`.
+- `AI_GATEWAY_ALLOWED_MODELS_OPENAI`, `AI_GATEWAY_ALLOWED_MODELS_GEMINI`, `AI_GATEWAY_ALLOWED_MODELS_OPENROUTER` — comma-separated exact chat model IDs allowed for each provider. The fallback allowlist is limited to the Gateway's single default model for that provider.
+- `AI_GATEWAY_ALLOWED_EMBEDDING_MODELS_OPENAI` — comma-separated exact embedding model IDs; defaults to `text-embedding-3-small`.
 - `AI_GATEWAY_DEFAULT_MODEL_OPENAI`, `AI_GATEWAY_DEFAULT_MODEL_GEMINI`, `AI_GATEWAY_DEFAULT_MODEL_OPENROUTER` — defaults used by the Gateway when a model is not provided; normal Worker requests use the model from the database route.
 - `AI_GATEWAY_MAX_OUTPUT_TOKENS`, `AI_GATEWAY_HTTP_REFERER`, `AI_GATEWAY_APP_NAME`.
 
@@ -45,7 +46,7 @@ Missing routes, secrets, allowlist entries, or budgets fail closed. The producti
 ## Current scope and limitations
 
 - OpenAI, Gemini, and OpenRouter chat requests are routed through the same protected Gateway contract.
-- The Worker still calls OpenAI directly for `text-embedding-3-small` embeddings; chat routing does not yet proxy embedding requests.
+- Both chat completions and OpenAI `text-embedding-3-small` embeddings are routed through the protected Gateway. Embeddings remain OpenAI-only because the database vector column is fixed at 1536 dimensions.
 - One enabled database route is selected per feature/scope. Automatic cross-provider failover is deliberately not enabled in this change: a timeout can occur after a provider has processed a paid request, and retrying against another provider without a separate reservation/settlement state machine could double-charge. Priority-based failover needs its own budget-aware implementation and tests.
 - Streaming is not enabled.
 - The Gateway keeps JWT verification enabled and additionally requires the internal token. Do not disable either protection for browser access.
