@@ -786,6 +786,7 @@ async function loadSectionData() {
       ]);
 
       const lessons = filterLearnerContent(lessonsRaw,classIds);
+      const visibleClassIds = new Set(classIds);
       const assignments = assignmentsRaw.filter((item)=>visibleClassIds.has(item.class_id));
       const submissions = submissionsRaw.filter((item)=>studentIds.includes(item.student_id));
       const assessmentById = Object.fromEntries(assessmentRows.map((item)=>[item.id,item]));
