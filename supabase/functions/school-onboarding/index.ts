@@ -12,6 +12,7 @@ import {
   type ActorAuthorizationContext,
   type ActorAssignment,
   type SchoolRoleKey,
+  type SchoolRoleScope,
 } from "./policy.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
@@ -110,7 +111,7 @@ async function maybeData<T>(
 
 async function bestEffort(
   label: string,
-  operation: () => Promise<{ error?: { code?: string; message?: string } | null } | void>,
+  operation: () => PromiseLike<{ error?: { code?: string; message?: string } | null } | void> | { error?: { code?: string; message?: string } | null } | void,
 ): Promise<void> {
   try {
     const result = await operation();
@@ -213,7 +214,7 @@ async function inviteAuthUser(
   );
   if (profileRows.length > 0) fail(409, "ACCOUNT_ALREADY_EXISTS_USE_ACCOUNT_LINKING");
 
-  const options: Record<string, unknown> = {
+  const options: { data: Record<string, unknown>; redirectTo?: string } = {
     data: { display_name: displayName },
   };
   if (APP_REDIRECT_URL) {
@@ -261,7 +262,7 @@ async function insertMemberships(
   actorId: string,
   userId: string,
   roleId: string,
-  roleScope: "tenant" | "school" | "class",
+  roleScope: SchoolRoleScope,
   tenantId: string,
   schoolId: string | null,
   classIds: string[],
@@ -493,7 +494,7 @@ async function provisionUser(
   studentIds: string[],
   state: CompensationState,
 ): Promise<{ userId: string; entityType: string; entityId: string | null }> {
-  const expectedScope = roleKey === "tenant_owner" ? "tenant" : schoolRoleScope(roleKey);
+  const expectedScope: SchoolRoleScope = roleKey === "tenant_owner" ? "tenant" : schoolRoleScope(roleKey);
   const role = await getRole(admin, roleKey, expectedScope);
   const invited = await inviteAuthUser(admin, email, displayName);
   state.userId = invited.id;
@@ -502,8 +503,8 @@ async function provisionUser(
   await insertProfile(admin, invited.id, email, displayName);
   await insertMemberships(admin, actorId, invited.id, role.id, expectedScope, tenantId, schoolId, classIds);
 
-  const rosterResult = schoolId
-    ? await insertRoster(admin, invited.id, email, tenantId, schoolId, roleKey as SchoolRoleKey, roster, studentIds)
+  const rosterResult = schoolId && roleKey !== "tenant_owner"
+    ? await insertRoster(admin, invited.id, email, tenantId, schoolId, roleKey, roster, studentIds)
     : { entityType: "tenant_owner", entityId: null };
 
   await writeAudit(
@@ -661,8 +662,8 @@ async function inviteSchoolMember(
     if (duplicate) fail(409, "EMPLOYEE_NUMBER_ALREADY_EXISTS");
   }
 
-  const displayName = optionalText(body.display_name, 180) ??
-    [roster.first_name, roster.last_name].filter((value) => typeof value === "string").join(" ").trim() ??
+  const displayName = optionalText(body.display_name, 180) ||
+    [roster.first_name, roster.last_name].filter((value) => typeof value === "string").join(" ").trim() ||
     email;
   if (!displayName) fail(400, "DISPLAY_NAME_REQUIRED");
   const state: CompensationState = { tenantId, schoolId };
