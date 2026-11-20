@@ -8,6 +8,7 @@ import {
   schoolRoleScope,
   uniqueIds,
   validateRosterPayload,
+  validateStudentAcademicYearAssignments,
 } from "./policy.ts";
 
 const tenantContext = {
@@ -154,4 +155,16 @@ Deno.test("student invitations require an active class enrollment request", () =
     ["11111111-1111-4111-8111-111111111111"],
     [],
   );
+});
+
+Deno.test("a student can have only one active class per academic year", () => {
+  validateStudentAcademicYearAssignments([
+    { id: "class-a", academic_year_id: "year-1" },
+    { id: "class-b", academic_year_id: "year-2" },
+  ]);
+
+  assertThrows(() => validateStudentAcademicYearAssignments([
+    { id: "class-a", academic_year_id: "year-1" },
+    { id: "class-b", academic_year_id: "year-1" },
+  ]), Error, "STUDENT_MULTIPLE_CLASSES_IN_ONE_ACADEMIC_YEAR_NOT_SUPPORTED");
 });
