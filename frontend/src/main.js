@@ -94,6 +94,8 @@ const state = {
   search: "",
   authMessage: "",
   authError: "",
+  recoveryMode: false,
+  recoveryComplete: false,
 };
 
 function esc(value) {
@@ -308,6 +310,29 @@ function renderAuth() {
     </div>
     <div id="toast-host" class="toast-host"></div>
   `;
+}
+
+function renderPasswordRecovery() {
+  return `
+    <div class="auth-layout">
+      <section class="auth-aside">
+        <div class="brand brand-light"><div class="brand-mark">MS</div><div><b>My School</b><small>منظومة إدارة وتعليم</small></div></div>
+        <div class="auth-aside-copy"><span class="eyebrow">استعادة آمنة للحساب</span><h1>كلمة مرور جديدة،<br/>وصولك كما هو.</h1><p>تحديث كلمة المرور لا يغيّر عضوياتك أو أدوارك أو صلاحياتك المسجلة.</p></div>
+      </section>
+      <section class="auth-panel">
+        <div class="auth-form">
+          ${state.recoveryComplete
+            ? `<div class="auth-heading"><span class="eyebrow">تم التحديث</span><h2>تم تغيير كلمة المرور</h2><p>يمكنك الآن الرجوع إلى شاشة الدخول واستخدام كلمة المرور الجديدة.</p></div><button class="button button-primary button-block" data-action="exit-recovery">العودة لتسجيل الدخول</button>`
+            : `<form id="recovery-form" class="auth-form"><div class="auth-heading"><span class="eyebrow">إعادة تعيين كلمة المرور</span><h2>اختر كلمة مرور جديدة</h2><p>أدخل كلمة المرور الجديدة ثم أكدها.</p></div>
+              ${state.authError ? `<div class="form-alert error">${esc(state.authError)}</div>` : ""}
+              <label class="field"><span>كلمة المرور الجديدة</span><input type="password" name="password" autocomplete="new-password" minlength="8" maxlength="128" required/></label>
+              <label class="field"><span>تأكيد كلمة المرور</span><input type="password" name="password_confirm" autocomplete="new-password" minlength="8" maxlength="128" required/></label>
+              <button class="button button-primary button-block" type="submit">حفظ كلمة المرور</button>
+            </form>`}
+        </div>
+      </section>
+    </div>
+    <div id="toast-host" class="toast-host"></div>`;
 }
 
 function renderNoAccess() {
@@ -579,7 +604,7 @@ async function loadSectionData() {
     case "support":
       return { rows: await fetchScoped(supabase, "support_tickets", "id,tenant_id,school_id,created_by,created_for_user_id,assigned_to_user_id,title,description,category,status,priority,source,resolved_at,closed_at,created_at,updated_at,closure_reason", ctx, { tenant: true, school: true, order: "created_at", limit: 300 }), schools: state.access.schools };
     case "questions":
-      return { rows: await fetchScoped(supabase, "question_bank", "id,sharing_scope,tenant_id,school_id,subject_code,subject_name,grade_code,grade_label,unit_title,lesson_title,question_type,question_text,choices,language_code,difficulty,review_status,record_status,origin_type,approved_at,created_at", ctx, { tenant: true, school: true, order: "created_at", limit: 250 }) };
+      return { rows: [], contextNotConfigured: true };
     case "profile": {
       const { data, error } = await supabase.from("profiles")
         .select("id,email,display_name,preferred_locale,timezone,created_at,updated_at")
@@ -840,10 +865,9 @@ function renderBilling(data) {
 }
 
 function renderQuestions(data) {
-  const rowsHtml = data.rows.map((row) => `<tr><td><strong>${esc(row.subject_name)}</strong><small>${esc(row.grade_label)} · ${esc(row.unit_title || "—")}</small></td><td>${esc(row.question_text)}</td><td>${esc(row.question_type)}</td><td>${esc(row.difficulty)}</td><td>${badge(row.review_status)}</td><td>${badge(row.record_status)}</td></tr>`);
-  return sectionHead("بنك الأسئلة", "الأسئلة المتاحة لهذا السياق فقط. مفاتيح الإجابات لا تُرسل إلى المتصفح.")
-    + `<div class="info-banner">هذه شاشة قراءة للأسئلة التي تسمح سياسات قاعدة البيانات بعرضها. تشغيل التوليد والتوزيع والاختبارات يعتمد على نشر خدمات الذكاء الاصطناعي والـmigrations المطابقة أولًا.</div>`
-    + table(["المادة والصف","السؤال","النوع","الصعوبة","المراجعة","الحالة"],rowsHtml,"لا توجد أسئلة متاحة للقراءة في هذا النطاق.");
+  return sectionHead("بنك الأسئلة", "وحدة محمية تعتمد على سياق المؤسسة والمدرسة داخل قاعدة البيانات.")
+    + `<div class="info-banner">عرض بنك الأسئلة متوقف في هذه النسخة؛ سياسة قاعدة البيانات تشترط إعداد سياق tenant/school من جهة الخادم لكل طلب. لن نعرض نتائج فارغة على أنها عدم وجود أسئلة، ولن نتجاوز السياسة من المتصفح. ستُفتح الوحدة بعد توفير طبقة الطلب الآمنة واختبار عزل المدارس.</div>`
+    + emptyState("الوحدة غير مفعّلة حاليًا", "لا يتم إرسال أي طلب قراءة لبنك الأسئلة من هذه الواجهة حتى تكتمل طبقة سياق الخادم.");
 }
 
 function renderProfile(data) {
@@ -863,6 +887,10 @@ function render() {
   setDirection();
   if (!supabaseConfigReady) {
     root.innerHTML = `<div class="setup-screen"><div class="setup-card"><div class="brand"><div class="brand-mark">MS</div><b>My School</b></div><h1>إعداد الاتصال بقاعدة البيانات مطلوب</h1><p>أضف <code>VITE_SUPABASE_URL</code> و<code>VITE_SUPABASE_ANON_KEY</code> في إعدادات البيئة الخاصة بالواجهة. لا تضف service role key إلى المتصفح.</p></div></div>`;
+    return;
+  }
+  if (state.recoveryMode) {
+    root.innerHTML = renderPasswordRecovery();
     return;
   }
   if (!state.session) {
@@ -917,7 +945,11 @@ async function handleSession(session) {
   state.session = session;
   state.user = session?.user ?? null;
   state.authError = "";
-  state.authMessage = "";
+  if (!session?.user) {
+    state.recoveryMode = false;
+    state.recoveryComplete = false;
+    state.authMessage = "";
+  }
   state.access = null;
   state.context = null;
   state.data = null;
