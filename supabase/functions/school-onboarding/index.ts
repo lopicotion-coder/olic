@@ -490,14 +490,25 @@ async function verifyClassIds(
   classIds: string[],
 ): Promise<Array<{ id: string; academic_year_id: string }>> {
   if (classIds.length === 0) return [];
-  const rows = await queryData<Array<{ id: string; academic_year_id: string }>>(
-    admin.from("classes").select("id,academic_year_id")
+  const rows = await queryData<Array<{ id: string; academic_year_id: string; status: string }>>(
+    admin.from("classes").select("id,academic_year_id,status")
       .eq("tenant_id", tenantId).eq("school_id", schoolId).in("id", classIds),
   );
   if (rows.length !== classIds.length || rows.some((row) => !row.academic_year_id)) {
     fail(400, "CLASS_OUTSIDE_SCHOOL_OR_MISSING_ACADEMIC_YEAR");
   }
-  return rows;
+  if (rows.some((row) => row.status !== "active")) {
+    fail(400, "CLASS_NOT_ACTIVE");
+  }
+  const yearIds = [...new Set(rows.map((row) => row.academic_year_id))];
+  const years = await queryData<Array<{ id: string; status: string }>>(
+    admin.from("academic_years").select("id,status")
+      .eq("tenant_id", tenantId).eq("school_id", schoolId).in("id", yearIds),
+  );
+  if (years.length !== yearIds.length || years.some((year) => year.status !== "active")) {
+    fail(400, "ACADEMIC_YEAR_NOT_ACTIVE");
+  }
+  return rows.map(({ id, academic_year_id }) => ({ id, academic_year_id }));
 }
 
 async function verifyStudentIds(
