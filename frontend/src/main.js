@@ -824,6 +824,8 @@ async function loadSectionData() {
         student.id,[student.first_name,student.middle_name,student.last_name].filter(Boolean).join(" "),
       ]));
       const namedMastery = mastery.map((item)=>({...item,student_name:studentNameById[item.student_id]??""}));
+      const namedSubmissions = submissions.map((item)=>({...item,student_name:studentNameById[item.student_id]??""}));
+      const namedGrades = grades.map((item)=>({...item,student_name:studentNameById[item.student_id]??""}));
 
       let tracks = [];
       let adaptiveAvailable = false;
@@ -861,8 +863,8 @@ async function loadSectionData() {
         enrollments,
         lessons,
         assignments,
-        submissions,
-        grades,
+        submissions:namedSubmissions,
+        grades:namedGrades,
         mastery:namedMastery,
         conceptsById,
         tracks,
