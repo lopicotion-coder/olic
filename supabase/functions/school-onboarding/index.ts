@@ -1,5 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import {
   canInviteSchoolRole,
   hasScopedPermission,
@@ -122,7 +122,7 @@ async function bestEffort(
   }
 }
 
-type AdminClient = ReturnType<typeof createClient>;
+type AdminClient = SupabaseClient<any, "public", "public", any, any>;
 
 async function loadActorAuthorization(
   admin: AdminClient,
