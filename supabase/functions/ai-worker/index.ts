@@ -5,6 +5,7 @@ import { fetchCurriculumPdf } from "./source-url.ts";
 import { hasValidWorkerToken } from "./worker-auth.ts";
 import { isUnsettledPaidProviderError } from "./background-budget-errors.ts";
 import { assertProviderSuccess } from "./provider-http.ts";
+import { callAiGateway } from "../_shared/ai-gateway-client.ts";
 import { estimateInputTokens, estimateOutputTokens, estimateUsdCost } from "./budget-math.ts";
 
 type ProviderName = "openrouter" | "openai" | "gemini" | "xai";
@@ -326,16 +327,9 @@ async function sha256HexText(value: string): Promise<string> {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const WORKER_INTERNAL_TOKEN = Deno.env.get("AI_WORKER_INTERNAL_TOKEN") ?? "";
-const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY") ?? "";
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
-const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
-const XAI_API_KEY = Deno.env.get("XAI_API_KEY") ?? "";
-const DEFAULT_PROVIDER = normalizeProvider(Deno.env.get("AI_DEFAULT_PROVIDER")) ?? "openrouter";
-const DEFAULT_MODEL_OPENROUTER = Deno.env.get("AI_GATEWAY_DEFAULT_MODEL_OPENROUTER") ?? "openai/gpt-4.1-mini";
-const DEFAULT_MODEL_OPENAI = Deno.env.get("AI_GATEWAY_DEFAULT_MODEL_OPENAI") ?? "gpt-4.1-mini";
-const DEFAULT_MODEL_GEMINI = Deno.env.get("AI_GATEWAY_DEFAULT_MODEL_GEMINI") ?? "gemini-2.5-flash";
-const DEFAULT_MODEL_XAI = Deno.env.get("AI_GATEWAY_DEFAULT_MODEL_XAI") ?? "grok-4.7";
-const APP_NAME = Deno.env.get("AI_GATEWAY_APP_NAME") ?? "My School AI Gateway";
+const AI_GATEWAY_INTERNAL_TOKEN = Deno.env.get("AI_GATEWAY_INTERNAL_TOKEN") ?? "";
+const AI_GATEWAY_URL = Deno.env.get("AI_GATEWAY_URL") ?? "";
 
 const EMBEDDING_PRICE_PER_MILLION = Number(Deno.env.get("AI_EMBEDDING_PRICE_PER_MILLION") ?? "0");
 
@@ -658,71 +652,16 @@ function systemPromptForQuestionGeneration(source: CurriculumSourceRow, version:
 }
 
 async function callProvider(provider: ProviderName, model: string, messages: GatewayMessage[], maxOutputTokens = 1024): Promise<ProviderResponse> {
-  if (provider === "gemini") {
-    if (!GEMINI_API_KEY) throw new Error("Missing GEMINI_API_KEY");
-    const sys = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n").trim();
-    const userParts = messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
-    const payload: Record<string, unknown> = {
-      contents: userParts,
-      generationConfig: { maxOutputTokens, temperature: 0.2, topP: 0.95 },
-    };
-    if (sys) payload.systemInstruction = { parts: [{ text: sys }] };
-    const res = await callJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model || DEFAULT_MODEL_GEMINI)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    assertProviderSuccess("gemini", res);
-    const raw = res.body as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>; usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } };
-    const content = raw.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-    return {
-      provider,
-      model: model || DEFAULT_MODEL_GEMINI,
-      content,
-      raw: res.body,
-      promptTokens: raw.usageMetadata?.promptTokenCount,
-      completionTokens: raw.usageMetadata?.candidatesTokenCount,
-      totalTokens: raw.usageMetadata?.totalTokenCount,
-    };
-  }
-
-  const apiKey = provider === "openrouter" ? OPENROUTER_API_KEY : provider === "openai" ? OPENAI_API_KEY : XAI_API_KEY;
-  if (!apiKey) throw new Error(`Missing API key for ${provider}`);
-  const url = provider === "openrouter"
-    ? "https://openrouter.ai/api/v1/chat/completions"
-    : provider === "openai"
-      ? "https://api.openai.com/v1/chat/completions"
-      : "https://api.x.ai/v1/chat/completions";
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-    authorization: `Bearer ${apiKey}`,
-  };
-  if (provider === "openrouter") {
-    headers["HTTP-Referer"] = Deno.env.get("AI_GATEWAY_HTTP_REFERER") ?? "https://chat.openai.com/";
-    headers["X-Title"] = APP_NAME;
-  }
-  const res = await callJson(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model: model || (provider === "openrouter" ? DEFAULT_MODEL_OPENROUTER : provider === "openai" ? DEFAULT_MODEL_OPENAI : DEFAULT_MODEL_XAI),
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
-      temperature: 0.2,
-      max_tokens: maxOutputTokens,
-      stream: false,
-    }),
-  });
-  assertProviderSuccess(provider, res);
-  const raw = res.body as { choices?: Array<{ message?: { content?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
-  return {
+  return await callAiGateway({
+    supabaseUrl: SUPABASE_URL,
+    endpoint: AI_GATEWAY_URL || undefined,
+    serviceRoleKey: SERVICE_ROLE,
+    internalToken: AI_GATEWAY_INTERNAL_TOKEN,
     provider,
-    model: model || (provider === "openrouter" ? DEFAULT_MODEL_OPENROUTER : provider === "openai" ? DEFAULT_MODEL_OPENAI : DEFAULT_MODEL_XAI),
-    content: raw.choices?.[0]?.message?.content ?? "",
-    raw: res.body,
-    promptTokens: raw.usage?.prompt_tokens,
-    completionTokens: raw.usage?.completion_tokens,
-    totalTokens: raw.usage?.total_tokens,
-  };
+    model,
+    messages,
+    maxOutputTokens,
+  });
 }
 
 async function selectRoute(tenantId: string | null, schoolId: string | null, featureKey: string): Promise<ProviderRouteRow | null> {
