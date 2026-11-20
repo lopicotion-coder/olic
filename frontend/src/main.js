@@ -1526,6 +1526,11 @@ root.addEventListener("click", async (event) => {
       await refreshPage();
     } else if (type === "forgot-password") {
       await forgotPassword();
+    } else if (type === "exit-recovery") {
+      await supabase.auth.signOut();
+      state.recoveryMode = false;
+      state.recoveryComplete = false;
+      render();
     } else if (type === "toggle-form") {
       const target = document.getElementById(button.dataset.target);
       target?.classList.toggle("hidden");
@@ -1619,6 +1624,30 @@ root.addEventListener("submit", async (event) => {
     }
     return;
   }
+  if (form.id === "recovery-form") {
+    const data = new FormData(form);
+    const password = String(data.get("password") || "");
+    const confirmation = String(data.get("password_confirm") || "");
+    if (password.length < 8 || password.length > 128 || password !== confirmation) {
+      state.authError = password !== confirmation
+        ? "تأكيد كلمة المرور غير مطابق."
+        : "كلمة المرور يجب ألا تقل عن 8 أحرف.";
+      render();
+      return;
+    }
+    const submit = form.querySelector('button[type="submit"]');
+    if (submit) submit.disabled = true;
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) {
+      state.authError = "تعذّر تغيير كلمة المرور. افتح رابط الاستعادة مرة أخرى أو اطلب رابطًا جديدًا.";
+      render();
+      return;
+    }
+    state.authError = "";
+    state.recoveryComplete = true;
+    render();
+    return;
+  }
   const type = form.dataset.form;
   if (!type) return;
   const submit = form.querySelector('button[type="submit"]');
@@ -1640,7 +1669,16 @@ function renderAndLoad() {
 }
 
 if (supabaseConfigReady) {
-  supabase.auth.onAuthStateChange((_event, session) => {
+  supabase.auth.onAuthStateChange((event, session) => {
+    if (event === "PASSWORD_RECOVERY") {
+      state.session = session;
+      state.user = session?.user ?? null;
+      state.recoveryMode = true;
+      state.recoveryComplete = false;
+      state.authError = "";
+      render();
+      return;
+    }
     queueMicrotask(() => handleSession(session).catch((error) => {
       console.error(error);
       state.pageError = "تعذّر فتح مساحة العمل.";
