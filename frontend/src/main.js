@@ -999,7 +999,7 @@ function renderStudents(data) {
         <label class="field"><span>رقم الطالب</span><input name="student_number" required maxlength="64" dir="ltr"/></label>
         <label class="field"><span>تاريخ الميلاد (اختياري)</span><input name="date_of_birth" type="date"/></label>
         <label class="field"><span>تاريخ الالتحاق (اختياري)</span><input name="admission_date" type="date"/></label>
-        <label class="field field-wide"><span>الفصل أو الفصول</span><select name="class_ids" multiple size="4" required>${classOptions(state.context.schoolId ?? "")}</select><small>اختر فصلًا واحدًا على الأقل. يجب أن تكون كل الفصول من المدرسة المحددة.</small></label>
+        <label class="field field-wide"><span>الفصل أو الفصول</span><select name="class_ids" multiple size="4" required>${classOptions(state.context.schoolId ?? "")}</select><small>اختر فصلًا واحدًا على الأقل من المدرسة المحددة. لا يمكن اختيار فصلين من السنة الدراسية نفسها للطالب.</small></label>
         <div class="form-actions"><button class="button button-primary" type="submit" ${!classRows.length ? "disabled" : ""}>دعوة الطالب</button></div>
       </form>
       ${!classRows.length ? emptyState("لا توجد فصول متاحة للتسجيل. أنشئ الفصول والسنة الدراسية أولًا.") : ""}
