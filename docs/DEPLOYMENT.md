@@ -2,7 +2,7 @@
 
 ## Current status
 
-**Do not deploy this repository yet.** The actual production frontend source has not been recovered and the database migration SQL files are incomplete. The private `draft` repository contains prototypes only.
+**Do not deploy this branch to production yet.** A new Vite + Supabase frontend now exists under `frontend/` on `feature/platform-expansion-plan`, but it is a proposed rebuild, not recovered production UI. It has not been deployed, and the full user journeys have not yet passed isolated-environment validation. The private `draft` repository remains an archive of prototypes only.
 
 No Vercel or Cloudflare deployment is currently confirmed for My School:
 - Vercel's connected Git context shows `lopicotion-coder/selsep-edu`, a separate education/assignments product.
