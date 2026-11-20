@@ -34,6 +34,15 @@ const STATUS_LABELS = {
   excused: "بعذر",
   trialing: "فترة تجريبية",
   past_due: "متأخر السداد",
+  in_progress: "قيد المعالجة",
+  waiting: "بانتظار رد",
+  resolved: "تم الحل",
+  closed: "مغلق",
+  scheduled: "مجدول",
+  completed: "مكتمل",
+  cancelled: "ملغي",
+  read: "مقروء",
+  unread: "غير مقروء",
   suspended: "موقوف",
   paid: "مدفوع",
   issued: "صادر",
@@ -331,16 +340,11 @@ function renderSection() {
     case "messages": return renderMessages(data);
     case "notifications": return renderNotifications(data);
     case "billing": return renderBilling(data);
-    case "fees": return renderFees(data);
-    case "timetable": return renderTimetable(data);
-    case "exams": return renderExams(data);
-    case "content": return renderContent(data);
-    case "support": return renderSupport(data);
-    case "fees": return renderFees(data, state.context, { has }),
-    case "timetable": return renderTimetable(data, state.context, { has }),
-    case "exams": return renderExams(data, state.context, { has }),
-    case "content": return renderContent(data, state.context, { has }),
-    case "support": return renderSupport(data, state.context, { has }, state.user.id),
+    case "fees": return renderFees(data, state.context, { has });
+    case "timetable": return renderTimetable(data, state.context, { has });
+    case "exams": return renderExams(data, state.context, { has });
+    case "content": return renderContent(data, state.context, { has });
+    case "support": return renderSupport(data, state.context, { has }, state.user.id);
     case "questions": return renderQuestions(data);
     case "profile": return renderProfile(data);
     default: return emptyState("هذا القسم غير متاح في السياق الحالي.");
@@ -534,7 +538,7 @@ async function loadSectionData() {
         has("fees.manage") || has("fees.read")
           ? lookupRows("students", "id,student_number,first_name,middle_name,last_name,school_id")
           : Promise.resolve(linkedStudents),
-        has("fees.manage") ? lookupRows("academic_years", "id,name,school_id,is_current,status") : Promise.resolve([]),
+        has("fees.manage") ? lookupRows("academic_years", "id,tenant_id,name,school_id,is_current,status") : Promise.resolve([]),
       ]);
       return { accounts, plans, installments, payments, students, years, schools: state.access.schools };
     }
