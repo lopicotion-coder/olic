@@ -315,6 +315,7 @@ type RosterResult = { entityType: string; entityId: string | null };
 
 async function insertRoster(
   admin: AdminClient,
+  actorId: string,
   userId: string,
   email: string,
   tenantId: string,
@@ -322,8 +323,10 @@ async function insertRoster(
   role: SchoolRoleKey,
   roster: Record<string, unknown>,
   studentIds: string[],
+  verifiedClasses: Array<{ id: string; academic_year_id: string }>,
 ): Promise<RosterResult> {
   if (role === "student") {
+    const admissionDate = dateOrNull(roster.admission_date);
     const row = await queryData<{ id: string }>(admin.from("students").insert({
       tenant_id: tenantId,
       school_id: schoolId,
@@ -333,9 +336,20 @@ async function insertRoster(
       middle_name: optionalText(roster.middle_name, 100),
       last_name: requiredText(roster.last_name, 100),
       date_of_birth: dateOrNull(roster.date_of_birth),
-      admission_date: dateOrNull(roster.admission_date),
+      admission_date: admissionDate,
       contact_email: email,
     }).select("id").single());
+
+    const enrollments = verifiedClasses.map((schoolClass) => ({
+      tenant_id: tenantId,
+      school_id: schoolId,
+      student_id: row.id,
+      class_id: schoolClass.id,
+      academic_year_id: schoolClass.academic_year_id,
+      ...(admissionDate ? { enrolled_on: admissionDate } : {}),
+      created_by: actorId,
+    }));
+    await queryData(admin.from("student_enrollments").insert(enrollments).select("id"));
     return { entityType: "student", entityId: row.id };
   }
 
@@ -466,12 +480,16 @@ async function verifyClassIds(
   tenantId: string,
   schoolId: string,
   classIds: string[],
-): Promise<void> {
-  if (classIds.length === 0) return;
-  const rows = await queryData<Array<{ id: string }>>(
-    admin.from("classes").select("id").eq("tenant_id", tenantId).eq("school_id", schoolId).in("id", classIds),
+): Promise<Array<{ id: string; academic_year_id: string }>> {
+  if (classIds.length === 0) return [];
+  const rows = await queryData<Array<{ id: string; academic_year_id: string }>>(
+    admin.from("classes").select("id,academic_year_id")
+      .eq("tenant_id", tenantId).eq("school_id", schoolId).in("id", classIds),
   );
-  if (rows.length !== classIds.length) fail(400, "CLASS_OUTSIDE_SCHOOL_OR_NOT_FOUND");
+  if (rows.length !== classIds.length || rows.some((row) => !row.academic_year_id)) {
+    fail(400, "CLASS_OUTSIDE_SCHOOL_OR_MISSING_ACADEMIC_YEAR");
+  }
+  return rows;
 }
 
 async function verifyStudentIds(
@@ -499,6 +517,7 @@ async function provisionUser(
   roster: Record<string, unknown>,
   classIds: string[],
   studentIds: string[],
+  verifiedClasses: Array<{ id: string; academic_year_id: string }>,
   state: CompensationState,
 ): Promise<{ userId: string; entityType: string; entityId: string | null }> {
   const expectedScope: SchoolRoleScope = roleKey === "tenant_owner" ? "tenant" : schoolRoleScope(roleKey);
@@ -511,7 +530,7 @@ async function provisionUser(
   await insertMemberships(admin, actorId, invited.id, role.id, expectedScope, tenantId, schoolId, classIds);
 
   const rosterResult = schoolId && roleKey !== "tenant_owner"
-    ? await insertRoster(admin, invited.id, email, tenantId, schoolId, roleKey, roster, studentIds)
+    ? await insertRoster(admin, actorId, invited.id, email, tenantId, schoolId, roleKey, roster, studentIds, verifiedClasses)
     : { entityType: "tenant_owner", entityId: null };
 
   await writeAudit(
@@ -558,7 +577,7 @@ async function createTenant(
     state.tenantId = created.id;
     const owner = await provisionUser(
       admin, requestId, actorId, created.id, null, "tenant_owner", email,
-      ownerName, {}, [], [], state,
+      ownerName, {}, [], [], [], state,
     );
     await writeAudit(admin, requestId, actorId, "tenant.created", "tenant", created.id, created.id, null, {
       owner_user_id: owner.userId,
@@ -641,7 +660,7 @@ async function inviteSchoolMember(
   const roster = asRecord(body.roster);
   validateRosterPayload(roleKey, roster, classIds, studentIds);
 
-  await verifyClassIds(admin, tenantId, schoolId, classIds);
+  const verifiedClasses = await verifyClassIds(admin, tenantId, schoolId, classIds);
   await verifyStudentIds(admin, tenantId, schoolId, studentIds);
 
   if (roleKey === "student") {
@@ -668,7 +687,7 @@ async function inviteSchoolMember(
   try {
     const result = await provisionUser(
       admin, requestId, actorId, tenantId, schoolId, roleKey, email,
-      displayName, roster, classIds, studentIds, state,
+      displayName, roster, classIds, studentIds, verifiedClasses, state,
     );
     return {
       user_id: result.userId,
