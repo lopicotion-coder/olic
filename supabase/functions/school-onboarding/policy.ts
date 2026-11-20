@@ -182,6 +182,18 @@ export function canInviteSchoolRole(
   return hasScopedPermission(context, "users.manage", tenantId, schoolId);
 }
 
+export function validateStudentAcademicYearAssignments(
+  classes: Array<{ id: string; academic_year_id: string }>,
+): void {
+  const seen = new Set<string>();
+  for (const item of classes) {
+    if (!item.academic_year_id || seen.has(item.academic_year_id)) {
+      throw new Error("STUDENT_MULTIPLE_CLASSES_IN_ONE_ACADEMIC_YEAR_NOT_SUPPORTED");
+    }
+    seen.add(item.academic_year_id);
+  }
+}
+
 export function validateRosterPayload(
   role: SchoolRoleKey,
   roster: Record<string, unknown>,
