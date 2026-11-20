@@ -1,11 +1,21 @@
 {
   "name": "my-school-frontend",
   "private": true,
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/ui.test.js"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.0.0"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19.0"
   }
 }
