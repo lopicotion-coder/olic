@@ -340,3 +340,15 @@ td small { display: block; margin-top: 4px; color: #91a0af; font-size: 10px; whi
 .practice-progress-track { height:8px; width:100%; overflow:hidden; border-radius:20px; background:#e8edf3; }
 .practice-progress-track span { display:block; height:100%; border-radius:20px; background:#4e789d; transition:width .2s ease; }
 .practice-progress-value { color:var(--navy); font:700 18px Inter,sans-serif; }
+
+.lesson-reader { overflow: hidden; }
+.lesson-reader .panel-heading { align-items: flex-start; }
+.lesson-reader .panel-heading h2 { margin: 6px 0 0; color: var(--navy); font-size: 20px; }
+.lesson-reader .panel-heading p { margin: 8px 0 0; color: var(--muted); line-height: 1.9; }
+.lesson-reader-body { padding: 22px 4px; color: var(--text); line-height: 2.05; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.lesson-reader-meta { display:flex; align-items:center; justify-content:space-between; gap:12px; border-top:1px solid var(--line); padding-top:12px; color:var(--muted); }
+.lesson-reader-meta small { font-size:11px; }
+@media (max-width: 720px) {
+  .lesson-reader .panel-heading { align-items: stretch; flex-direction:column; }
+  .lesson-reader-body { padding: 16px 0; font-size: 13px; }
+}
