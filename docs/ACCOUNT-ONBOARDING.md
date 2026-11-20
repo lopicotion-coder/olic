@@ -89,7 +89,7 @@ Requires platform `platform.schools.manage` or tenant-scoped `schools.manage`. T
 Currently supported role keys are `school_admin`, `school_owner`, `supervisor`, `teacher`, `student`, and `parent`. The production role catalog has no `assistant` role; that role cannot be granted until it is deliberately added and permission-reviewed.
 
 Role-specific roster data:
-- `student`: requires `student_number`, `first_name`, `last_name`, and at least one `class_id`; optional `middle_name`, `date_of_birth`, and `admission_date`. Each selected class and its academic year must be active and belong to the same school; the function creates an active `student_enrollments` row using the class's academic year.
+- `student`: requires `student_number`, `first_name`, `last_name`, and at least one `class_id`; optional `middle_name`, `date_of_birth`, and `admission_date`. Each selected class and its academic year must be active and belong to the same school. The database permits only one active enrollment per student per academic year, so the invite function rejects choosing two classes from the same year. It creates an active `student_enrollments` row using each selected class's academic year.
 - `teacher`: requires first/last name and at least one valid `class_id`; optional `employee_number` and `phone`. Each assigned class gets a class-scoped teacher role.
 - `parent`: requires first/last name, `relationship`, and one or more `student_ids` belonging to the same tenant and school. The Guardian profile and child links are provisioned together.
 - `school_admin`, `school_owner`, and `supervisor`: require school membership/role but no separate roster row.
