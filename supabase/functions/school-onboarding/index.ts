@@ -214,22 +214,22 @@ async function inviteAuthUser(
   );
   if (profileRows.length > 0) fail(409, "ACCOUNT_ALREADY_EXISTS_USE_ACCOUNT_LINKING");
 
+  if (!APP_REDIRECT_URL) fail(503, "APP_REDIRECT_URL_REQUIRED_FOR_INVITATIONS");
   const options: { data: Record<string, unknown>; redirectTo?: string } = {
     data: { display_name: displayName },
   };
-  if (APP_REDIRECT_URL) {
-    let redirect: URL;
-    try {
-      redirect = new URL(APP_REDIRECT_URL);
-    } catch {
-      fail(500, "APP_REDIRECT_URL_INVALID");
-    }
-    if (redirect!.protocol !== "https:" && redirect!.hostname !== "localhost" &&
-        redirect!.hostname !== "127.0.0.1") {
-      fail(500, "APP_REDIRECT_URL_MUST_USE_HTTPS");
-    }
-    options.redirectTo = redirect!.toString();
+  let redirect: URL;
+  try {
+    redirect = new URL(APP_REDIRECT_URL);
+  } catch {
+    fail(500, "APP_REDIRECT_URL_INVALID");
   }
+  if (redirect!.protocol !== "https:" && redirect!.hostname !== "localhost" &&
+      redirect!.hostname !== "127.0.0.1") {
+    fail(500, "APP_REDIRECT_URL_MUST_USE_HTTPS");
+  }
+  redirect!.searchParams.set("invite", "1");
+  options.redirectTo = redirect!.toString();
 
   const { data, error } = await admin.auth.admin.inviteUserByEmail(email, options);
   if (error || !data.user?.id) {
