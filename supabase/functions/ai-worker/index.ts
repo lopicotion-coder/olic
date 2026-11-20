@@ -1911,15 +1911,17 @@ async function processIngestionJobs(limit: number): Promise<{ extracted: number;
         let storageObjectPath: string | null = null;
 
         if (version.storage_object_path) {
-          storageBucket = version.storage_bucket || "school-files";
-          storageObjectPath = version.storage_object_path;
-          const { data: blob, error: downloadError } = await supabase.storage.from(storageBucket).download(storageObjectPath);
+          const objectPath = version.storage_object_path;
+          const bucket = version.storage_bucket || "school-files";
+          storageBucket = bucket;
+          storageObjectPath = objectPath;
+          const { data: blob, error: downloadError } = await supabase.storage.from(bucket).download(objectPath);
           dbError("Download curriculum source", downloadError);
           if (!blob) throw new Error("Storage returned no curriculum source file");
           bytes = new Uint8Array(await blob.arrayBuffer());
           fileName = String(
             (version.extraction_metadata as Record<string, unknown> | null)?.file_name
-              ?? storageObjectPath.split("/").pop() ?? "curriculum-source.pdf"
+              ?? objectPath.split("/").pop() ?? "curriculum-source.pdf"
           );
           declaredMimeType = blob.type || declaredMimeType;
         } else if (version.source_url) {

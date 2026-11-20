@@ -715,7 +715,7 @@ function renderSchools(data) {
       <label class="field"><span>الرابط المختصر</span><input name="slug" required minlength="3" maxlength="63" pattern="[a-z0-9][a-z0-9-]{1,61}[a-z0-9]" placeholder="school-name" dir="ltr"/></label>
       <label class="field"><span>الكود (اختياري)</span><input name="code" maxlength="40"/></label>
       <label class="field"><span>لغة الواجهة</span><select name="default_locale"><option value="ar">العربية</option><option value="en">English</option></select></label>
-      <label class="field"><span>الدولة (ISO alpha-2)</span><input name="country_code" value="EG" maxlength="2" pattern="[A-Z]{2}" required dir="ltr"/></label>
+      <label class="field"><span>الدولة (ISO alpha-2)</span><input name="country_code" value="" maxlength="2" pattern="[A-Z]{2}" required dir="ltr"/></label>
       <label class="field"><span>النظام التعليمي</span><input name="education_system" maxlength="120"/></label>
       <label class="field"><span>المجلس / المنهج</span><input name="curriculum_board" maxlength="160"/></label>
       <label class="field"><span>نوع المدرسة</span><select name="school_track"><option value="">غير محدد</option><option value="national_arabic">حكومي / عربي</option><option value="national_language">قومي لغات</option><option value="international">دولي</option><option value="other">أخرى</option></select></label>

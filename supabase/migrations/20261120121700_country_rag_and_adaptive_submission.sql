@@ -89,6 +89,13 @@ begin
     join public.curriculum_source_versions cv
       on cv.id = cc.source_version_id
      and cv.ingestion_status = 'ready'
+     and cv.id = (
+       select latest.id
+       from public.curriculum_source_versions latest
+       where latest.source_id = cc.source_id
+       order by latest.created_at desc
+       limit 1
+     )
     where cc.search_vector @@ plainto_tsquery('simple'::regconfig, query_text)
       and (p_source_version_id is null or cc.source_version_id = p_source_version_id)
     order by ts_rank_cd(
@@ -109,6 +116,13 @@ begin
     join public.curriculum_source_versions cv
       on cv.id = cc.source_version_id
      and cv.ingestion_status = 'ready'
+     and cv.id = (
+       select latest.id
+       from public.curriculum_source_versions latest
+       where latest.source_id = cc.source_id
+       order by latest.created_at desc
+       limit 1
+     )
     where cc.embedding is not null
       and (p_source_version_id is null or cc.source_version_id = p_source_version_id)
     order by cc.embedding <=> p_query_embedding, cc.id
@@ -179,6 +193,13 @@ begin
   join public.curriculum_source_versions cv
     on cv.id = cc.source_version_id
    and cv.ingestion_status = 'ready'
+   and cv.id = (
+     select latest.id
+     from public.curriculum_source_versions latest
+     where latest.source_id = cc.source_id
+     order by latest.created_at desc
+     limit 1
+   )
   order by tc.combined_score desc, cc.id;
 end;
 $$;

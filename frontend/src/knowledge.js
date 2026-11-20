@@ -96,7 +96,7 @@ export function renderKnowledgeConsole(data) {
       ${field("عنوان المصدر","title","text",{required:true,maxLength:300})}
       ${field("رابط PDF مباشر (HTTPS)","source_url","url",{required:true,maxLength:2048,placeholder:"https://example.org/book.pdf",dir:"ltr"})}
       ${field("نوع المعرفة","knowledge_role","select",{required:true,choices:[{value:"curriculum",label:"كتاب / مرجع منهج"},{value:"model_answer",label:"نموذج إجابة / حلول"}]})}
-      ${field("الدولة (ISO 3166-1 alpha-2)","country_code","text",{required:true,maxLength:2,pattern:"[A-Z]{2}",value:"EG",dir:"ltr"})}
+      ${field("الدولة (ISO 3166-1 alpha-2)","country_code","text",{required:true,maxLength:2,pattern:"[A-Z]{2}",dir:"ltr"})}
       ${field("النظام التعليمي","education_system","text",{maxLength:120})}
       ${field("المجلس / المنهج","curriculum_board","text",{maxLength:160})}
       ${field("رمز المادة","subject_code","text",{required:true,maxLength:80,dir:"ltr"})}
@@ -115,7 +115,7 @@ export function renderKnowledgeConsole(data) {
 
   const addConcept = `
     <form class="form-grid compact-form" data-form="create-curriculum-concept">
-      ${field("الدولة","country_code","text",{required:true,maxLength:2,value:"EG",pattern:"[A-Z]{2}",dir:"ltr"})}
+      ${field("الدولة","country_code","text",{required:true,maxLength:2,pattern:"[A-Z]{2}",dir:"ltr"})}
       ${field("النظام التعليمي","education_system","text",{maxLength:120})}
       ${field("المجلس / المنهج","curriculum_board","text",{maxLength:160})}
       ${field("رمز المادة","subject_code","text",{required:true,maxLength:80,dir:"ltr"})}

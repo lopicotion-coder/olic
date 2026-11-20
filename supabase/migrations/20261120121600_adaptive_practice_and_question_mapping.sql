@@ -135,7 +135,7 @@ begin
     limit greatest(1,least(coalesce(p_limit,8),20))
   ),
   new_exposures as (
-    insert into public.student_question_exposures (
+    insert into public.student_question_exposures as existing_exposure (
       tenant_id,school_id,student_id,question_id,exposure_status,
       first_delivered_at,first_rendered_at,last_event_at,display_count
     )
@@ -143,13 +143,13 @@ begin
     from selected s
     on conflict (student_id,question_id) do update
       set exposure_status='rendered',
-          first_delivered_at=coalesce(public.student_question_exposures.first_delivered_at,now()),
-          first_rendered_at=coalesce(public.student_question_exposures.first_rendered_at,now()),
+          first_delivered_at=coalesce(existing_exposure.first_delivered_at,now()),
+          first_rendered_at=coalesce(existing_exposure.first_rendered_at,now()),
           last_event_at=now(),
-          display_count=public.student_question_exposures.display_count+1,
+          display_count=existing_exposure.display_count+1,
           updated_at=now()
-      where public.student_question_exposures.assessment_id is null
-        and public.student_question_exposures.assignment_id is null
+      where existing_exposure.assessment_id is null
+        and existing_exposure.assignment_id is null
     returning id,question_id
   )
   select

@@ -20,7 +20,7 @@ Only `standard` PDF text extraction is currently enabled. The `diagram_ocr` and 
 
 ## Multi-country and language context
 
-Schools and source records carry ISO alpha-2 country codes, education system, curriculum board, grade, and subject. Existing schools remain unconfigured until an authorized operator confirms their country; NULL-country schools receive no curriculum or answer-model matches. Egypt is the default country for newly created schools, but no other country content is seeded. Curriculum retrieval filters by country, subject, grade, sharing scope, rights approval, and ready version.
+Schools and source records carry ISO alpha-2 country codes, education system, curriculum board, grade, and subject. Existing schools and sources remain unconfigured until an authorized operator confirms their country; NULL-country records receive no curriculum or answer-model matches. New schools, sources, and concepts require an explicit country selection; the application does not infer Egypt or any other country. Curriculum retrieval filters by country, subject, grade, sharing scope, rights approval, and ready version.
 
 School track and instruction language are explicit school settings. They are never inferred from a school name. Per-subject policy can override the school default. The tutor uses verified settings to distinguish Arabic-national, national-language, and international tracks; it must not translate English grammar or subject content by default for a configured English-track learner.
 
