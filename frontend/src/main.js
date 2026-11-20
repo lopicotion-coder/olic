@@ -755,11 +755,28 @@ function renderSchools(data) {
         <div class="form-actions"><button class="button button-primary" type="submit" ${!state.context.tenantId && !tenants.length ? "disabled" : ""}>إنشاء المدرسة وإرسال الدعوة</button></div>
       </form>
     </section>` : "";
+  const canInviteManagers = has("users.manage") || has("platform.schools.manage");
+  const canGrantSchoolAdmin = has("platform.schools.manage") || (has("users.manage") && state.context.scope === "tenant");
+  const managerSchoolSelect = state.context.schoolId
+    ? `<input type="hidden" name="school_id" value="${esc(state.context.schoolId)}"/>`
+    : `<label class="field"><span>المدرسة</span><select name="school_id" required><option value="">اختر مدرسة</option>${data.rows.map((school) => `<option value="${esc(school.id)}">${esc(school.name)}</option>`).join("")}</select></label>`;
+  const managerInvite = canInviteManagers ? `
+    <section class="panel">
+      <div class="panel-heading"><div><h3>دعوة مسؤول أو مشرف مدرسة</h3><p>صلاحية مسؤول المدرسة تُمنح فقط من مستوى المؤسسة أو المنصة.</p></div></div>
+      <form class="form-grid compact-form" data-form="invite-school-manager">
+        ${managerSchoolSelect}
+        <label class="field"><span>نوع الدور</span><select name="role_key" required>${canGrantSchoolAdmin ? `<option value="school_admin">مسؤول مدرسة</option>` : ""}<option value="supervisor">مشرف</option></select></label>
+        <label class="field"><span>البريد الإلكتروني</span><input name="email" type="email" required maxlength="254" dir="ltr"/></label>
+        <label class="field"><span>الاسم الظاهر</span><input name="display_name" required maxlength="180"/></label>
+        <div class="form-actions"><button class="button button-primary" type="submit" ${!data.rows.length ? "disabled" : ""}>إرسال الدعوة</button></div>
+      </form>
+    </section>` : "";
   const schemaNotice = has("platform.schools.manage") || has("schools.manage")
     ? `<div class="info-banner">إعدادات الدولة والمنهج وسياسات اللغة المتقدمة مؤجلة؛ مخطط قاعدة الإنتاج الحالي لا يحتوي أعمدتها أو جدول إعدادات المواد.</div>`
     : "";
   return sectionHead("المدارس", "المدارس المتاحة ضمن نطاق العضوية والصلاحيات الحالية.")
     + createForm
+    + managerInvite
     + schemaNotice
     + table(["المدرسة","الرابط المختصر","الحالة","لغة الواجهة","المنطقة الزمنية"], rowsHtml, "لا توجد مدارس متاحة لهذا الحساب.");
 }
@@ -1265,6 +1282,24 @@ async function perform(action) {
           employee_number: optional(action.formData, "employee_number") || null,
           phone: optional(action.formData, "phone") || null,
         },
+      });
+      break;
+    }
+    case "invite-school-manager": {
+      if (!has("users.manage") && !has("platform.schools.manage")) {
+        throw new Error("دعوة مسؤولي المدارس تتطلب صلاحية إدارة المستخدمين.");
+      }
+      const schoolId = ctx.schoolId || required(action.formData, "school_id");
+      const roleKey = required(action.formData, "role_key");
+      if (!["school_admin", "supervisor"].includes(roleKey)) throw new Error("الدور المختار غير مسموح.");
+      await callSchoolOnboarding({
+        action: "invite_member",
+        tenant_id: ctx.tenantId || required(action.formData, "tenant_id"),
+        school_id: schoolId,
+        role_key: roleKey,
+        email: required(action.formData, "email"),
+        display_name: required(action.formData, "display_name"),
+        roster: {},
       });
       break;
     }
