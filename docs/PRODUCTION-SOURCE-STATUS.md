@@ -110,3 +110,20 @@ Do not interpret these branch changes as deployed production capability. The new
 - Corrected the tenant background-operation request cap to count active reservations before they settle.
 - Added a private manual logical backup procedure for the Free plan. The procedure excludes Supabase-managed Auth/Storage schemas and is not a full project recovery image.
 - No production migrations, Edge Function replacements, secrets, provider routes, AI budgets, or cron jobs were written during this pass.
+
+
+## Browser frontend rebuild — 2026-11-20
+
+A new Vite/Supabase browser application has been added on `feature/platform-expansion-plan` under `frontend/`. This is a new schema-driven implementation, not a recovered copy of the previous live UI. It has not been deployed.
+
+- Supabase Auth login, password reset completion, and role/context loading are implemented.
+- Navigation is derived from active memberships, role assignments and role permissions; the client does not let users select arbitrary roles.
+- User-facing tables/forms read and write the existing school, student, teacher, class, attendance, assignment, grade, conversation, notification, subscription, fee, timetable, exam, content and support tables. All requests remain subject to production RLS.
+- The previous hardcoded demo dashboard was removed. The frontend has no seeded users, schools, student profiles, sample metrics or simulated payment results.
+- Fee payment UI records money already received; it does not represent an online payment gateway.
+- The independent learner profile/practice migrations are not deployed, so no global learner profile is presented as live.
+- Bank of Questions is intentionally disabled in the browser UI. Its current RLS policy relies on `app.current_tenant_id()` / `app.current_school_id()`; the browser Data API request has no verified secure server-side context setter.
+- GitHub Actions now includes frontend unit tests for membership-derived access contexts plus a Vite production build. A green CI result is required before calling this branch build-verified.
+- Production Supabase schema, Auth settings, deployed Edge Functions, Storage and live customer rows were not changed by this frontend work.
+
+Release remains blocked until CI passes and login, role scoping, CRUD flows, password recovery, RLS isolation and tenant/school boundaries are exercised against an isolated test database. Do not deploy the branch or apply feature migrations to production as a substitute for that validation.
