@@ -210,18 +210,19 @@ export function renderContent(data, context, permissions) {
     + table(["العنوان","النوع","الحالة","تاريخ النشر","آخر تحديث","إجراء"],rows,"لا يوجد محتوى مسجل أو منشور في هذا النطاق.");
 }
 
-export function renderSupport(data, context, permissions, userId) {
+export function renderSupport(data, context, permissions) {
   const rows=data.rows.map((ticket)=>\`<tr><td><strong>\${esc(ticket.title)}</strong><small>\${esc(ticket.category)} · \${esc(ticket.source)}</small></td><td>\${badge(ticket.status)}</td><td>\${badge(ticket.priority)}</td><td>\${dateText(ticket.created_at)}</td><td>\${dateText(ticket.updated_at)}</td><td>\${permissions.has("support.manage")&& !["closed","resolved"].includes(ticket.status)?\`<button class="button button-small button-secondary" data-action="resolve-ticket" data-id="\${esc(ticket.id)}">حل الطلب</button>\`:""}</td></tr>\`);
-  const form=permissions.has("support.create")||permissions.has("support.manage")?\`
+  const canCreate=(permissions.has("support.create")||permissions.has("support.manage"))&&Boolean(context.tenantId);
+  const form=canCreate?\`
     <form class="form-grid compact-form" data-form="create-support-ticket">
-      \${schoolField(context,data.schools)}
+      \${context.schoolId ? "" : \`<label class="field"><span>المدرسة (اختياري)</span><select name="school_id"><option value="">طلب على مستوى المؤسسة</option>\${(data.schools??[]).filter((school)=>school.tenant_id===context.tenantId).map((school)=>\`<option value="\${esc(school.id)}">\${esc(school.name)}</option>\`).join("")}</select></label>\`}
       <label class="field"><span>العنوان</span><input name="title" required maxlength="180"/></label>
       <label class="field"><span>التصنيف</span><input name="category" required maxlength="80"/></label>
       <label class="field"><span>الأولوية</span><select name="priority"><option value="normal">عادية</option><option value="low">منخفضة</option><option value="high">مرتفعة</option><option value="urgent">عاجلة</option></select></label>
       <label class="field field-wide"><span>وصف المشكلة أو الطلب</span><textarea name="description" rows="5" required maxlength="12000"></textarea></label>
       <div class="form-actions"><button class="button button-primary" type="submit">إرسال طلب الدعم</button></div>
     </form>\`:"";
-  return heading("الدعم الفني","طلبات الدعم التي أنشأتها أو تسمح لك صلاحياتك بمتابعتها.",permissions.has("support.create")||permissions.has("support.manage")?\`<button class="button button-secondary" data-action="toggle-form" data-target="support-create-form">طلب جديد</button>\`:"")
-    + ((permissions.has("support.create")||permissions.has("support.manage"))?formPanel("support-create-form",form):"")
+  return heading("الدعم الفني","طلبات الدعم التي أنشأتها أو تسمح لك صلاحياتك بمتابعتها.",canCreate?\`<button class="button button-secondary" data-action="toggle-form" data-target="support-create-form">طلب جديد</button>\`:"")
+    + (canCreate?formPanel("support-create-form",form):"")
     + table(["الطلب","الحالة","الأولوية","تاريخ الإنشاء","آخر تحديث","إجراء"],rows,"لا توجد طلبات دعم متاحة لهذا الحساب.");
 }
