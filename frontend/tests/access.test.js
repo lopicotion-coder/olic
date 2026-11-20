@@ -15,7 +15,6 @@ const catalog = {
     { id: "p-assignments", key: "assignments.manage" },
     { id: "p-attendance", key: "attendance.manage" },
     { id: "p-messages", key: "conversations.read" },
-    { id: "p-fees", key: "fees.read" },
   ],
   rolePermissions: [
     { role_id: "r-platform", permission_id: "p-platform" },
