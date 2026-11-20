@@ -123,7 +123,7 @@ A new Vite/Supabase browser application has been added on `feature/platform-expa
 - Fee payment UI records money already received; it does not represent an online payment gateway.
 - The independent learner profile/practice migrations are not deployed, so no global learner profile is presented as live.
 - Bank of Questions is intentionally disabled in the browser UI. Its current RLS policy relies on `app.current_tenant_id()` / `app.current_school_id()`; the browser Data API request has no verified secure server-side context setter.
-- GitHub Actions now includes frontend unit tests for membership-derived access contexts plus a Vite production build. A green CI result is required before calling this branch build-verified.
+- GitHub Actions frontend check passed on commit `6c17d14f587871da6051b6910d8d942eefba7817` (run [#44716856449](https://github.com/lopicotion-coder/olic/actions/runs/44716856449)): all 6 access-control tests passed and `vite build` completed successfully. This is a source/build check only; it is not a substitute for authenticated RLS integration tests in an isolated Supabase environment.
 - Production Supabase schema, Auth settings, deployed Edge Functions, Storage and live customer rows were not changed by this frontend work.
 
 Release remains blocked until CI passes and login, role scoping, CRUD flows, password recovery, RLS isolation and tenant/school boundaries are exercised against an isolated test database. Do not deploy the branch or apply feature migrations to production as a substitute for that validation.
