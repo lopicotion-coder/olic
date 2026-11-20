@@ -18,6 +18,7 @@ import {
 import { renderKnowledgeConsole, renderLearningDashboard } from "./knowledge.js";
 import { acceptPendingMemberships } from "./membership-acceptance.js";
 import { isInvitationCallback, isPendingInvitationUser } from "./invitation-flow.js";
+import { filterLearnerContent } from "./learning-access.js";
 
 const root = document.querySelector("#app");
 const STORAGE_CONTEXT_KEY = "my-school:last-context";
@@ -693,8 +694,7 @@ async function loadSectionData() {
           ? await rows(supabase.from("student_enrollments")
               .select("class_id").in("student_id",linkedIds).eq("status","active"))
           : [];
-        const allowedClassIds = new Set(activeEnrollments.map((item)=>item.class_id));
-        contentRows = contentRows.filter((item)=>!item.class_id || allowedClassIds.has(item.class_id));
+        contentRows = filterLearnerContent(contentRows,activeEnrollments.map((item)=>item.class_id));
       }
       const selectedContent = contentRows.find((item) => item.id === state.selectedContentId) ?? null;
       return { rows: contentRows, selectedContent, classes, subjects, schools: state.access.schools };
@@ -785,8 +785,7 @@ async function loadSectionData() {
           : Promise.resolve({data:[],error:null}),
       ]);
 
-      const visibleClassIds = new Set(classIds);
-      const lessons = lessonsRaw.filter((item)=>!item.class_id || visibleClassIds.has(item.class_id));
+      const lessons = filterLearnerContent(lessonsRaw,classIds);
       const assignments = assignmentsRaw.filter((item)=>visibleClassIds.has(item.class_id));
       const submissions = submissionsRaw.filter((item)=>studentIds.includes(item.student_id));
       const assessmentById = Object.fromEntries(assessmentRows.map((item)=>[item.id,item]));
