@@ -60,7 +60,7 @@ These are not dropped product ideas; they are explicitly outside the 30 November
 
 - Complete a private, encrypted backup covering database, Auth, Storage and required configuration/secrets through supported procedures.
 - Perform a restore drill into an isolated environment and verify row counts, Auth identities, storage metadata/objects and critical workflows.
-- Create or provision an isolated staging environment. Obtain cost approval before creating a billable Supabase branch/project.
+- **Zero budget:** do not create a paid Supabase branch/project. Use local tooling and CI only. The existing Supabase project is production, not staging.
 - Keep PR #13 Draft until the migration set and worker changes are reviewed and tested.
 - Enable leaked-password protection and review remaining high-risk security findings.
 - Pin dependencies and ensure frontend tests and production build run on the latest branch head.
@@ -69,7 +69,7 @@ These are not dropped product ideas; they are explicitly outside the 30 November
 
 ### Gate 1 — schema and AI runtime (21–24 Nov)
 
-- Apply the 11 branch migrations to staging in order.
+- Do not apply the 11 branch migrations to production. First recover the missing applied schema baseline and validate the migration sequence in a local environment using existing tools only.
 - Validate constraints, functions, RLS, grants, triggers, indexes and rollback/recovery behavior.
 - Run tenant isolation and role-matrix tests for platform admin, school admin, teacher, assistant, student and parent.
 - Configure provider routes, model allowlists, token prices, tenant/platform budgets, rate limits and secrets in staging.
@@ -81,7 +81,7 @@ These are not dropped product ideas; they are explicitly outside the 30 November
 
 ### Gate 2 — core frontend and school workflows (24–27 Nov)
 
-- Deploy the branch frontend to a protected preview environment.
+- Run the branch frontend locally and through GitHub Actions. Do not create a paid preview/hosting service; use an already available no-cost option only if its terms and security fit.
 - Test registration/invitation and school setup using real end-to-end accounts.
 - Test each role's core workflows on desktop and mobile.
 - Complete student learning home, adaptive practice progress, completion, evidence-based recommendations and parent progress view.
@@ -125,7 +125,11 @@ A failed gate means controlled pilot or delay, not bypass.
 | 28–29 Nov | Pilot, fixes, recovery rehearsal | Pilot acceptance report |
 | 30 Nov | Go/no-go | Controlled MVP release decision |
 
-Dates are sequencing targets, not claims that the underlying dependencies are already available.
+Dates are sequencing targets, not claims that the underlying dependencies are already available. Under the current EGP 0 / USD 0 budget, database-dependent release gates may remain open beyond 30 November; never bypass them to meet the date.
+
+## Zero-budget constraint
+
+No new paid infrastructure, provider/API spend, paid acquisition or subscriptions are approved before first customer revenue. Follow [Zero-Budget Execution Mode](ZERO-BUDGET-EXECUTION.md). The first revenue is reinvested first into backup/recovery and database validation, then funded AI/payment capabilities.
 
 ## Operational rule
 
