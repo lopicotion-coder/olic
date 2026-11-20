@@ -80,7 +80,7 @@ export function uniqueIds(values: unknown, maximum = 25): string[] {
     throw new Error("INVALID_ID_LIST");
   }
   const normalized = values.map((value) => {
-    if (typeof value !== "string" || !/^[0-9a-f-]{36}$/i.test(value)) {
+    if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
       throw new Error("INVALID_ID_LIST");
     }
     return value.toLowerCase();
@@ -149,6 +149,35 @@ export function hasScopedPermission(
 
     return assignment.scope === "class" && Boolean(classId) && assignment.class_id === classId;
   });
+}
+
+export function canInviteSchoolRole(
+  context: ActorAuthorizationContext,
+  role: SchoolRoleKey,
+  tenantId: string,
+  schoolId: string,
+): boolean {
+  const platformGrant = hasScopedPermission(
+    context,
+    "platform.schools.manage",
+    tenantId,
+    schoolId,
+  );
+  if (platformGrant) return true;
+
+  const tenantAdminGrant = hasScopedPermission(
+    context,
+    "users.manage",
+    tenantId,
+    null,
+    null,
+    true,
+  );
+  if (role === "school_admin" || role === "school_owner") {
+    return tenantAdminGrant;
+  }
+
+  return hasScopedPermission(context, "users.manage", tenantId, schoolId);
 }
 
 export function validateRosterPayload(
