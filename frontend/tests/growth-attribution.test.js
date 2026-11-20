@@ -25,7 +25,7 @@ test("captures only allow-listed campaign fields and a route key", () => {
   const touch = captureAttributionTouch({
     pageUrl:
       "https://example.test/pricing?utm_source=teacher&utm_medium=video&utm_campaign=november&utm_content=short-1&email=student%40example.com&token=secret#private",
-    pageKey: "student/pricing?email=private",
+    pageKey: "student/pricing?email=private#secret",
     siteOrigin: "https://example.test",
     capturedAt: "2026-11-20T12:00:00.000Z",
   });
