@@ -683,7 +683,19 @@ async function loadSectionData() {
         canManage ? lookupRows("classes", "id,name,status,school_id", { classScope: true }) : Promise.resolve([]),
         canManage ? lookupRows("subjects", "id,name,code,status,school_id") : Promise.resolve([]),
       ]);
-      const contentRows = canManage ? rawContentRows : rawContentRows.filter((item) => item.status === "published");
+      let contentRows = canManage ? rawContentRows : rawContentRows.filter((item) => item.status === "published");
+      if (!canManage && ["student","parent"].includes(ctx.roleKey)) {
+        const linkedStudents = ctx.roleKey === "student"
+          ? await fetchMyStudentRecords(supabase,state.user.id)
+          : await fetchGuardianStudentRecords(supabase,state.user.id);
+        const linkedIds = [...new Set(linkedStudents.map((item)=>item.id))];
+        const activeEnrollments = linkedIds.length
+          ? await rows(supabase.from("student_enrollments")
+              .select("class_id").in("student_id",linkedIds).eq("status","active"))
+          : [];
+        const allowedClassIds = new Set(activeEnrollments.map((item)=>item.class_id));
+        contentRows = contentRows.filter((item)=>!item.class_id || allowedClassIds.has(item.class_id));
+      }
       const selectedContent = contentRows.find((item) => item.id === state.selectedContentId) ?? null;
       return { rows: contentRows, selectedContent, classes, subjects, schools: state.access.schools };
     }
