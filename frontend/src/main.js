@@ -92,9 +92,13 @@ function dateText(value) {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return esc(value);
-  return new Intl.DateTimeFormat(state.locale === "ar" ? "ar-EG" : "en-GB", {
-    dateStyle: "medium", timeZone: state.access?.profile?.timezone || "Africa/Cairo",
-  }).format(date);
+  const locale = state.locale === "ar" ? "ar-EG" : "en-GB";
+  const timezone = state.access?.profile?.timezone || "Africa/Cairo";
+  try {
+    return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: timezone }).format(date);
+  } catch {
+    return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(date);
+  }
 }
 
 function statusText(status) {
@@ -438,7 +442,7 @@ async function loadSectionData() {
         fetchScoped(supabase, "assignment_submissions", "id,assignment_id,student_id,submission_text,status,submitted_at,score,feedback,graded_at", ctx, { limit: 500 }),
       ]);
       const ownStudents = ctx.roleKey === "student" ? await fetchMyStudentRecords(supabase, state.user.id) : [];
-      return { assignments, classes: classRows, subjects, submissions, ownStudentIds: ownStudents.map((row) => row.id) };
+      return { assignments, classes: classRows, subjects, submissions, ownStudents };
     }
     case "grades": {
       const [assessments, gradeRows, studentRows] = await Promise.all([
@@ -640,8 +644,8 @@ function renderAssignments(data) {
       <label class="check-field"><input type="checkbox" name="allow_late_submission"/><span>السماح بالتسليم المتأخر</span></label>
       <div class="form-actions"><button class="button button-primary" type="submit" ${!data.classes.length || !data.subjects.length ? "disabled" : ""}>حفظ كمسودة</button></div>
     </form>` : "";
-  const studentForm = has("assignments.submit") && data.ownStudentIds.length
-    ? `<section class="panel"><h3>تسليم واجب</h3><form class="form-grid compact-form" data-form="submit-assignment"><label class="field"><span>الواجب المنشور</span><select name="assignment_id" required><option value="">اختر واجبًا</option>${data.assignments.filter((item) => item.status === "published").map((item) => `<option value="${esc(item.id)}">${esc(item.title)}</option>`).join("")}</select></label><label class="field field-wide"><span>إجابتك</span><textarea name="submission_text" rows="4" required maxlength="12000"></textarea></label><div class="form-actions"><button class="button button-primary" type="submit">إرسال الإجابة</button></div></form></section>`
+  const studentForm = has("assignments.submit") && data.ownStudents.length
+    ? `<section class="panel"><h3>تسليم واجب</h3><form class="form-grid compact-form" data-form="submit-assignment"><label class="field"><span>سجلك الدراسي</span><select name="student_id" required><option value="">اختر سجلّك</option>${data.ownStudents.map((item) => `<option value="${esc(item.id)}">${esc([item.first_name,item.middle_name,item.last_name].filter(Boolean).join(" "))} — ${esc(item.student_number)}</option>`).join("")}</select></label><label class="field"><span>الواجب المنشور</span><select name="assignment_id" required><option value="">اختر واجبًا</option>${data.assignments.filter((item) => item.status === "published").map((item) => `<option value="${esc(item.id)}">${esc(item.title)}</option>`).join("")}</select></label><label class="field field-wide"><span>إجابتك</span><textarea name="submission_text" rows="4" required maxlength="12000"></textarea></label><div class="form-actions"><button class="button button-primary" type="submit">إرسال الإجابة</button></div></form></section>`
     : "";
   const submissionsPanel = has("assignments.manage") && data.submissions.length
     ? `<section class="panel"><div class="panel-heading"><div><h3>تسليمات الطلاب</h3><p>الدرجات والتعليقات المسجلة على التسليمات.</p></div></div>${table(["الواجب","الحالة","تاريخ التسليم","الدرجة","تعليق المعلم"],data.submissions.map((item) => `<tr><td>${esc(data.assignments.find((a) => a.id === item.assignment_id)?.title || "—")}</td><td>${badge(item.status)}</td><td>${dateText(item.submitted_at)}</td><td>${item.score ?? "—"}</td><td>${esc(item.feedback || "—")}</td></tr>`))}</section>` : "";
@@ -766,6 +770,10 @@ function render() {
   }
   if (state.loading && !state.access) {
     root.innerHTML = loadingView();
+    return;
+  }
+  if (!state.access && state.pageError) {
+    root.innerHTML = `<div class="no-access-layout"><div class="no-access-card"><div class="brand"><div class="brand-mark">MS</div><b>My School</b></div><h1>تعذّر تحميل صلاحيات الحساب</h1><p>${esc(state.pageError)}</p><button class="button button-secondary" data-action="retry-access">إعادة المحاولة</button><button class="text-button" data-action="signout">تسجيل الخروج</button></div></div><div id="toast-host" class="toast-host"></div>`;
     return;
   }
   if (!state.access?.contexts?.length) {
@@ -938,13 +946,15 @@ async function perform(action) {
       break;
     }
     case "submit-assignment": {
-      if (!has("assignments.submit") || !state.data?.ownStudentIds?.length) throw new Error("لا يوجد سجل طالب مرتبط بهذا الحساب أو لا تملك صلاحية التسليم.");
+      if (!has("assignments.submit") || !state.data?.ownStudents?.length) throw new Error("لا يوجد سجل طالب مرتبط بهذا الحساب أو لا تملك صلاحية التسليم.");
       const assignmentId = required(action.formData, "assignment_id");
+      const studentId = required(action.formData, "student_id");
+      if (!state.data.ownStudents.some((item) => item.id === studentId)) throw new Error("سجل الطالب المختار غير مرتبط بحسابك.");
       const assignment = state.data.assignments.find((item) => item.id === assignmentId && item.status === "published");
       if (!assignment) throw new Error("الواجب غير متاح للتسليم.");
       const payload = {
         tenant_id: assignment.tenant_id, school_id: assignment.school_id,
-        assignment_id: assignment.id, student_id: state.data.ownStudentIds[0],
+        assignment_id: assignment.id, student_id: studentId,
         submission_text: required(action.formData, "submission_text"),
         status: "submitted", submitted_at: new Date().toISOString(),
       };
