@@ -8,6 +8,13 @@ import {
   fetchMyStudentRecords,
   fetchGuardianStudentRecords,
 } from "./repository.js";
+import {
+  renderFees,
+  renderTimetable,
+  renderExams,
+  renderContent,
+  renderSupport,
+} from "./sections.js";
 
 const root = document.querySelector("#app");
 const STORAGE_CONTEXT_KEY = "my-school:last-context";
@@ -329,6 +336,11 @@ function renderSection() {
     case "exams": return renderExams(data);
     case "content": return renderContent(data);
     case "support": return renderSupport(data);
+    case "fees": return renderFees(data, state.context, { has }),
+    case "timetable": return renderTimetable(data, state.context, { has }),
+    case "exams": return renderExams(data, state.context, { has }),
+    case "content": return renderContent(data, state.context, { has }),
+    case "support": return renderSupport(data, state.context, { has }, state.user.id),
     case "questions": return renderQuestions(data);
     case "profile": return renderProfile(data);
     default: return emptyState("هذا القسم غير متاح في السياق الحالي.");
@@ -524,7 +536,7 @@ async function loadSectionData() {
           : Promise.resolve(linkedStudents),
         has("fees.manage") ? lookupRows("academic_years", "id,name,school_id,is_current,status") : Promise.resolve([]),
       ]);
-      return { accounts, plans, installments, payments, students, years };
+      return { accounts, plans, installments, payments, students, years, schools: state.access.schools };
     }
     case "timetable": {
       const [entries, classes, subjects, teachers, years] = await Promise.all([
@@ -536,21 +548,32 @@ async function loadSectionData() {
           : Promise.resolve([]),
         lookupRows("academic_years", "id,name,is_current,status,school_id"),
       ]);
-      return { entries, classes, subjects, teachers, years };
+      return { entries, classes, subjects, teachers, years, schools: state.access.schools };
     }
     case "exams": {
-      const [sessions, classes, subjects, candidates] = await Promise.all([
+      const [sessions, classes, subjects, candidates, students] = await Promise.all([
         fetchScoped(supabase, "exam_sessions", "id,tenant_id,school_id,class_id,subject_id,term_id,title,exam_type,scheduled_at,duration_minutes,room_name,max_score,status,published_at", ctx, { classScope: true, order: "scheduled_at", limit: 300 }),
         lookupRows("classes", "id,name,status,school_id", { classScope: true }),
         lookupRows("subjects", "id,name,code,status,school_id"),
-        fetchScoped(supabase, "exam_candidates", "id,exam_session_id,student_id,seat_number,committee_name", ctx, { limit: 1000 }),
+        fetchScoped(supabase, "exam_candidates", "id,tenant_id,school_id,exam_session_id,student_id,seat_number,committee_name", ctx, { limit: 1000 }),
+        has("students.read")
+          ? fetchScoped(supabase, "students", "id,tenant_id,school_id,student_number,first_name,middle_name,last_name", ctx, { limit: 1000 })
+          : ctx.roleKey === "student" ? fetchMyStudentRecords(supabase, state.user.id)
+          : ctx.roleKey === "parent" ? fetchGuardianStudentRecords(supabase, state.user.id)
+          : Promise.resolve([]),
       ]);
-      return { sessions, classes, subjects, candidates };
+      return { sessions, classes, subjects, candidates, students, schools: state.access.schools };
     }
-    case "content":
-      return { rows: await fetchScoped(supabase, "content_items", "id,tenant_id,school_id,class_id,subject_id,title,summary,body,resource_type,status,published_at,created_by,created_at,updated_at", ctx, { classScope: true, order: "created_at", limit: 300 }) };
+    case "content": {
+      const [contentRows, classes, subjects] = await Promise.all([
+        fetchScoped(supabase, "content_items", "id,tenant_id,school_id,class_id,subject_id,title,summary,body,resource_type,status,published_at,created_by,created_at,updated_at", ctx, { classScope: true, order: "created_at", limit: 300 }),
+        has("content.manage") ? lookupRows("classes", "id,name,status,school_id", { classScope: true }) : Promise.resolve([]),
+        has("content.manage") ? lookupRows("subjects", "id,name,code,status,school_id") : Promise.resolve([]),
+      ]);
+      return { rows: contentRows, classes, subjects, schools: state.access.schools };
+    }
     case "support":
-      return { rows: await fetchScoped(supabase, "support_tickets", "id,tenant_id,school_id,created_by,created_for_user_id,assigned_to_user_id,title,description,category,status,priority,source,resolved_at,closed_at,created_at,updated_at,closure_reason", ctx, { tenant: true, school: true, order: "created_at", limit: 300 }) };
+      return { rows: await fetchScoped(supabase, "support_tickets", "id,tenant_id,school_id,created_by,created_for_user_id,assigned_to_user_id,title,description,category,status,priority,source,resolved_at,closed_at,created_at,updated_at,closure_reason", ctx, { tenant: true, school: true, order: "created_at", limit: 300 }), schools: state.access.schools };
     case "questions":
       return { rows: await fetchScoped(supabase, "question_bank", "id,sharing_scope,tenant_id,school_id,subject_code,subject_name,grade_code,grade_label,unit_title,lesson_title,question_type,question_text,choices,language_code,difficulty,review_status,record_status,origin_type,approved_at,created_at", ctx, { tenant: true, school: true, order: "created_at", limit: 250 }) };
     case "profile": {
