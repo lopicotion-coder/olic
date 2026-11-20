@@ -462,15 +462,12 @@ async function loadSectionData() {
     case "tenants":
       return { rows: await rows(supabase.from("tenants").select("id,legal_name,display_name,slug,status,created_at").order("display_name").limit(300)) };
     case "schools": {
-      const [schoolRows, tenants] = await Promise.all([
-        rows(scoped("schools", "id,tenant_id,name,code,slug,status,default_locale,timezone,country_code,education_system,curriculum_board,school_track,instruction_language_policy,created_at", { tenant: true, school: false, order: "name", limit: 300 })),
-        has("platform.schools.manage") ? Promise.resolve(state.access.tenants) : Promise.resolve([]),
-      ]);
-      const schoolIds = schoolRows.map((school) => school.id);
-      const subjectPolicies = schoolIds.length ? await rows(supabase.from("school_subject_learning_policies")
-        .select("id,tenant_id,school_id,subject_code,instruction_language_policy,target_language_level,curriculum_alignment,updated_at")
-        .in("school_id",schoolIds).order("subject_code")) : [];
-      return { rows: schoolRows, tenants, subjectPolicies };
+      const schoolRows = await rows(scoped(
+        "schools",
+        "id,tenant_id,name,code,slug,status,default_locale,timezone,created_at",
+        { tenant: true, school: false, order: "name", limit: 300 },
+      ));
+      return { rows: schoolRows };
     }
     case "students": {
       let studentRows = [];
@@ -715,51 +712,18 @@ function renderTenants(data) {
 }
 
 function renderSchools(data) {
-  const rowsHtml = data.rows.map((row) => `<tr><td><strong>${esc(row.name)}</strong><small>${esc(row.code)}</small></td><td>${esc(row.slug)}</td><td>${badge(row.status)}</td><td>${esc(row.default_locale)}</td><td>${esc(row.timezone)}</td><td>${esc(row.country_code || "غير محدد")} · ${esc(row.school_track || "غير محدد")}</td></tr>`);
+  const rowsHtml = data.rows.map((row) => `<tr><td><strong>${esc(row.name)}</strong><small>${esc(row.code)}</small></td><td>${esc(row.slug)}</td><td>${badge(row.status)}</td><td>${esc(row.default_locale)}</td><td>${esc(row.timezone)}</td></tr>`);
   const canManage = has("platform.schools.manage") || has("schools.manage");
   const onboardingNotice = canManage
-    ? `<div class="info-banner">إنشاء مدرسة جديدة متوقف مؤقتًا. النموذج القديم كان ينشئ سجل المدرسة فقط، دون دعوة مالك المدرسة أو إنشاء عضويته ودوره. سنعيد تفعيله بعد تجهيز عملية onboarding ذرّية ومختبرة تمنع إنشاء مدرسة بلا مسؤول دخول.</div>`
+    ? `<div class="info-banner">إنشاء مدرسة جديدة سيُفعّل من خلال دعوة مالكها في عملية onboarding الآمنة. لن ننشئ سجل مدرسة منفصلًا عن حساب مسؤولها.</div>`
     : "";
-  const profileForms = canManage ? data.rows.map((school) => `
-    <details class="panel school-learning-settings">
-      <summary><strong>${esc(school.name)}</strong><span>ضبط المنهج وطريقة التدريس للذكاء الاصطناعي</span></summary>
-      <form class="form-grid compact-form" data-form="update-school-learning-profile">
-        <input type="hidden" name="school_id" value="${esc(school.id)}"/>
-        <label class="field"><span>الدولة (ISO alpha-2)</span><input name="country_code" value="${esc(school.country_code || "")}" maxlength="2" pattern="[A-Z]{2}" required dir="ltr"/></label>
-        <label class="field"><span>النظام التعليمي</span><input name="education_system" value="${esc(school.education_system)}" maxlength="120"/></label>
-        <label class="field"><span>المجلس / المنهج</span><input name="curriculum_board" value="${esc(school.curriculum_board)}" maxlength="160"/></label>
-        <label class="field"><span>نوع المدرسة</span><select name="school_track">
-          <option value="" ${!school.school_track?"selected":""}>غير محدد</option>
-          <option value="national_arabic" ${school.school_track==="national_arabic"?"selected":""}>حكومي / عربي</option>
-          <option value="national_language" ${school.school_track==="national_language"?"selected":""}>قومي لغات</option>
-          <option value="international" ${school.school_track==="international"?"selected":""}>دولي</option>
-          <option value="other" ${school.school_track==="other"?"selected":""}>أخرى</option>
-        </select></label>
-        <label class="field"><span>لغة التدريس الافتراضية</span><select name="instruction_language_policy">
-          <option value="adaptive" ${school.instruction_language_policy==="adaptive"?"selected":""}>حسب المادة والطالب</option>
-          <option value="ar" ${school.instruction_language_policy==="ar"?"selected":""}>العربية</option>
-          <option value="en" ${school.instruction_language_policy==="en"?"selected":""}>English</option>
-          <option value="bilingual" ${school.instruction_language_policy==="bilingual"?"selected":""}>ثنائي اللغة</option>
-        </select></label>
-        <div class="form-actions"><button class="button button-secondary" type="submit">حفظ إعدادات المدرسة</button></div>
-      </form>
-    </details>`).join("") : "";
+  const schemaNotice = canManage
+    ? `<div class="info-banner">إعدادات الدولة والمنهج وسياسات اللغة المتقدمة غير مفعّلة بعد؛ مخطط قاعدة الإنتاج الحالي لا يحتوي أعمدتها أو جدول إعدادات المواد. لن نعرض نماذج حفظ غير متصلة بقاعدة البيانات.</div>`
+    : "";
   return sectionHead("المدارس", "المدارس المتاحة ضمن نطاق العضوية والصلاحيات الحالية.")
     + onboardingNotice
-    + table(["المدرسة","الرابط المختصر","الحالة","لغة الواجهة","المنطقة الزمنية","السياق التعليمي"], rowsHtml, "لا توجد مدارس متاحة لهذا الحساب.")
-    + (profileForms ? `<div class="school-learning-settings-list">${profileForms}</div>` : "")
-    + (canManage ? `
-      <section class="panel"><div class="panel-heading"><h3>إعدادات كل مادة للذكاء الاصطناعي</h3></div>
-        <form class="form-grid compact-form" data-form="save-school-subject-policy">
-          <label class="field"><span>المدرسة</span><select name="school_id" required><option value="">اختر مدرسة</option>${data.rows.map((school)=>`<option value="${esc(school.id)}">${esc(school.name)}</option>`).join("")}</select></label>
-          <label class="field"><span>رمز المادة</span><input name="subject_code" required maxlength="80" dir="ltr"/></label>
-          <label class="field"><span>لغة الشرح</span><select name="instruction_language_policy"><option value="adaptive">تكيّفية حسب الطالب والمصدر</option><option value="ar">العربية</option><option value="en">English</option><option value="bilingual">ثنائي اللغة</option></select></label>
-          <label class="field"><span>المستوى المستهدف للمادة (اختياري)</span><input name="target_language_level" maxlength="32" placeholder="B1 / B2 / C1" dir="ltr"/></label>
-          <label class="field"><span>ملاحظة مواءمة المنهج</span><input name="curriculum_alignment" maxlength="300"/></label>
-          <div class="form-actions"><button class="button button-secondary" type="submit">حفظ إعداد المادة</button></div>
-        </form>
-        ${table(["المدرسة","المادة","لغة الشرح","المستوى المستهدف","آخر تحديث"],(data.subjectPolicies??[]).map((policy)=>`<tr><td>${esc(data.rows.find((school)=>school.id===policy.school_id)?.name??"")}</td><td>${esc(policy.subject_code)}</td><td>${esc(policy.instruction_language_policy)}</td><td>${esc(policy.target_language_level??"—")}</td><td>${dateText(policy.updated_at)}</td></tr>`),"لا توجد إعدادات خاصة بالمواد حتى الآن.")}
-      </section>` : "");
+    + schemaNotice
+    + table(["المدرسة","الرابط المختصر","الحالة","لغة الواجهة","المنطقة الزمنية"], rowsHtml, "لا توجد مدارس متاحة لهذا الحساب.");
 }
 
 function renderStudents(data) {
@@ -1113,37 +1077,10 @@ async function perform(action) {
       throw new Error("إنشاء المدرسة متوقف حتى تجهيز دعوة مالك المدرسة وتسجيل عضويته ودوره في عملية آمنة واحدة.");
     }
     case "save-school-subject-policy": {
-      if (!(has("platform.schools.manage") || has("schools.manage"))) throw new Error("لا تملك صلاحية ضبط لغة المواد.");
-      const schoolId=required(action.formData,"school_id");
-      const school=(state.data?.rows??[]).find((item)=>item.id===schoolId);
-      if(!school) throw new Error("المدرسة خارج نطاق الوصول الحالي.");
-      const subjectCode=required(action.formData,"subject_code").trim();
-      const language=required(action.formData,"instruction_language_policy");
-      if(!["adaptive","ar","en","bilingual"].includes(language)) throw new Error("لغة التدريس غير مدعومة.");
-      await mutation(supabase.from("school_subject_learning_policies").upsert({
-        tenant_id:school.tenant_id,school_id:school.id,subject_code:subjectCode,
-        instruction_language_policy:language,
-        target_language_level:optional(action.formData,"target_language_level")||null,
-        curriculum_alignment:optional(action.formData,"curriculum_alignment")||null,
-        created_by:state.user.id,updated_by:state.user.id,
-      },{onConflict:"school_id,subject_code"}),"حفظ إعداد لغة المادة");
-      break;
+      throw new Error("إعدادات اللغة والمناهج لكل مادة غير متاحة حتى إضافة جدولها ومراجعة RLS وترحيلها بأمان.");
     }
     case "update-school-learning-profile": {
-      if (!(has("platform.schools.manage") || has("schools.manage"))) throw new Error("لا تملك صلاحية تعديل إعدادات المدرسة.");
-      const school = (state.data?.rows ?? []).find((item)=>item.id===required(action.formData,"school_id"));
-      if (!school) throw new Error("المدرسة ليست ضمن نطاق الوصول الحالي.");
-      const country = required(action.formData,"country_code").toUpperCase();
-      if (!/^[A-Z]{2}$/.test(country)) throw new Error("رمز الدولة يجب أن يكون حرفين كبيرين.");
-      const payload = {
-        country_code: country,
-        education_system: optional(action.formData,"education_system") || null,
-        curriculum_board: optional(action.formData,"curriculum_board") || null,
-        school_track: optional(action.formData,"school_track") || null,
-        instruction_language_policy: required(action.formData,"instruction_language_policy"),
-      };
-      await mutation(supabase.from("schools").update(payload).eq("id",school.id),"تحديث سياق المدرسة التعليمي");
-      break;
+      throw new Error("حقول إعدادات المنهج المتقدمة غير موجودة في مخطط قاعدة البيانات الحالي.");
     }
     case "create-knowledge-source": {
       if (!has("platform.knowledge.manage")) throw new Error("إدارة مصادر المعرفة متاحة لمسؤولي المنصة فقط.");
