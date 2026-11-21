@@ -127,3 +127,15 @@ A new Vite/Supabase browser application has been added on `feature/platform-expa
 - Production Supabase schema, Auth settings, deployed Edge Functions, Storage and live customer rows were not changed by this frontend work.
 
 Release remains blocked until CI passes and login, role scoping, CRUD flows, password recovery, RLS isolation and tenant/school boundaries are exercised against an isolated test database. Do not deploy the branch or apply feature migrations to production as a substitute for that validation.
+
+## Reconciled Production SQL ledger — 2026-11-21
+
+- Live Supabase migration ledger reports **41 applied entries** through `20261121115037`.
+- Working branch `feature/phase6-10-completion-2026-11-21` now includes one timestamped SQL file for every one of those 41 entries; lengths are checked against the hosted ledger.
+- `supabase/migrations/applied-history.json` records the version, name, reconstructed filename, executed SQL length and the hosted-ledger MD5 value for each entry.
+- **Fidelity note:** the source was reconstructed by joining the stored executed-statement array in order. The SQL execution statements are preserved, but original file comments, whitespace formatting and non-executed client directives cannot be guaranteed.
+- Fourteen later feature migrations and this branch's atomic academic-year rollover migration are branch-only and are not represented as already applied to Production.
+- The live database has 116 user-managed tables across `public`/`app`; all were observed with RLS enabled. There are still no tenant, school, student or guardian fixture records and one Auth user. RLS must be verified in isolated fixtures before a real school is onboarded.
+- The live `content_items_read` policy and `students.national_id` grants remain unpatched in Production. Fixes exist in source; do not mark the related P0/P1 issues resolved until a verified backup and controlled rollout have succeeded.
+- During this work the legacy `ai-gateway` and `ai-worker` deployed functions were moved to fail-closed gates (JWT verification on; legacy gateway POST returns 410; worker requires a separate internal secret and does not process jobs). They must be reconciled with the protected source in this repository before AI activation.
+- No live application migrations or school data were changed in this recovery pass, except the separately recorded additive `ai_experience_feedback` migration `20261121115037` applied earlier in this session. No school/student records were present.
