@@ -1,8 +1,25 @@
 \set ON_ERROR_STOP on
 
-create role anon nologin;
-create role authenticated nologin;
-create role myschool_runtime nologin;
+do $$
+begin
+  create role anon nologin;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create role authenticated nologin;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create role myschool_runtime nologin;
+exception when duplicate_object then null;
+end $$;
+
+drop table if exists public.student_enrollment_requests cascade;
+drop table if exists public.students cascade;
 
 create table public.students (
   id uuid primary key,
