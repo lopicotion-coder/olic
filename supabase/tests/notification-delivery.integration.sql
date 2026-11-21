@@ -64,6 +64,8 @@ grant usage on schema auth to service_role, authenticated, myschool_runtime;
 grant execute on function auth.role() to service_role, authenticated, myschool_runtime;
 grant select on public.notification_deliveries, public.notification_delivery_attempts,
   public.notification_delivery_dead_letters to service_role;
+grant select on public.notification_deliveries, public.notification_delivery_attempts,
+  public.notification_delivery_dead_letters to service_role;
 
 -- Apply the exact migration under test.
 \ir ../migrations/20261121140000_notification_delivery_worker.sql
