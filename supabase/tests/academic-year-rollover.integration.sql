@@ -212,9 +212,6 @@ begin
   end;
   if not v_rejected then raise exception 'cross-school target was accepted'; end if;
 
-  if (select count(*) from public.audit_logs where action='academic_year.rollover') <> 1 then
-    raise exception 'rollover audit event count is incorrect';
-  end if;
 end;
 $rollover_tests$;
 
@@ -240,5 +237,11 @@ end;
 $unauthorized_test$;
 
 reset role;
+
+do $audit_test$ begin
+  if (select count(*) from public.audit_logs where action='academic_year.rollover') <> 1 then
+    raise exception 'rollover audit event count is incorrect';
+  end if;
+end $audit_test$;
 
 select 'academic year rollover integration tests passed' as result;
