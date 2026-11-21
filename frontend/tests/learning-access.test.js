@@ -20,10 +20,20 @@ test("never shows drafts or lessons for another class", () => {
   assert.deepEqual(visible, []);
 });
 
-test("shows only school-wide content when the learner has no active class enrollment", () => {
+test("shows only explicitly school-wide content when the learner has no active class enrollment", () => {
   const visible = filterLearnerContent([
     { id: "school", status: "published", class_id: null },
+    { id: "empty-class", status: "published", class_id: "" },
+    { id: "missing-class", status: "published" },
     { id: "class-a", status: "published", class_id: "class-a" },
   ], []);
   assert.deepEqual(visible.map((item) => item.id), ["school"]);
+});
+
+test("does not treat a missing class_id as a school-wide publication", () => {
+  const visible = filterLearnerContent([
+    { id: "missing", status: "published" },
+    { id: "null", status: "published", class_id: null },
+  ], []);
+  assert.deepEqual(visible.map((item) => item.id), ["null"]);
 });
