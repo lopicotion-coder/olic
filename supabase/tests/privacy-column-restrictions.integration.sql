@@ -25,16 +25,43 @@ create table public.students (
   id uuid primary key,
   tenant_id uuid not null,
   school_id uuid not null,
-  national_id text,
-  first_name text not null
+  campus_id uuid,
+  profile_id uuid,
+  student_number text not null,
+  first_name text not null,
+  middle_name text,
+  last_name text not null,
+  date_of_birth date,
+  admission_date date,
+  status text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  student_username text,
+  contact_email text,
+  contact_phone text,
+  national_id text
 );
 
 create table public.student_enrollment_requests (
   id uuid primary key,
   tenant_id uuid not null,
   school_id uuid not null,
+  user_id uuid not null,
+  student_number text not null,
+  first_name text not null,
+  middle_name text,
+  last_name text not null,
+  date_of_birth date,
+  status text not null,
+  reviewed_by uuid,
+  reviewed_at timestamptz,
+  student_id uuid,
+  created_at timestamptz not null default now(),
+  student_email text,
+  student_phone text,
   national_id text,
-  student_number text not null
+  requested_grade_level_id uuid,
+  relationship text not null
 );
 
 grant select on public.students to authenticated, myschool_runtime;
@@ -51,12 +78,16 @@ declare
   v_students_runtime boolean;
   v_requests_runtime boolean;
   v_students_id_ok boolean;
+  v_students_name_ok boolean;
+  v_requests_name_ok boolean;
 begin
   select has_column_privilege('authenticated', 'public.students', 'national_id', 'select') into v_students_auth;
   select has_column_privilege('authenticated', 'public.student_enrollment_requests', 'national_id', 'select') into v_requests_auth;
   select has_column_privilege('myschool_runtime', 'public.students', 'national_id', 'select') into v_students_runtime;
   select has_column_privilege('myschool_runtime', 'public.student_enrollment_requests', 'national_id', 'select') into v_requests_runtime;
   select has_column_privilege('authenticated', 'public.students', 'id', 'select') into v_students_id_ok;
+  select has_column_privilege('authenticated', 'public.students', 'first_name', 'select') into v_students_name_ok;
+  select has_column_privilege('authenticated', 'public.student_enrollment_requests', 'student_number', 'select') into v_requests_name_ok;
 
   if v_students_auth then
     raise exception 'authenticated can still read public.students.national_id';
@@ -76,6 +107,14 @@ begin
 
   if not v_students_id_ok then
     raise exception 'baseline students.id select privilege was removed unexpectedly';
+  end if;
+
+  if not v_students_name_ok then
+    raise exception 'baseline students.first_name select privilege was removed unexpectedly';
+  end if;
+
+  if not v_requests_name_ok then
+    raise exception 'baseline student_enrollment_requests.student_number select privilege was removed unexpectedly';
   end if;
 end;
 $privacy_tests$;
