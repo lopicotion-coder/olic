@@ -1,0 +1,39 @@
+name: Frontend checks
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-check.yml"
+  push:
+    branches:
+      - feature/platform-expansion-plan
+      - develop
+      - main
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm install --no-audit --no-fund --package-lock=false
+      - name: Run access-control unit tests
+        working-directory: frontend
+        run: npm test
+      - name: Build production assets
+        working-directory: frontend
+        run: npm run build

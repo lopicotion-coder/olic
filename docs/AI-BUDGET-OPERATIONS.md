@@ -1,0 +1,113 @@
+# AI runtime budgets and operations
+
+## What the runtime enforces
+
+### Tenant and school requests
+The Worker must load an enabled provider route with explicit positive USD input/output prices. It estimates prompt cost, reserves funds from the most-specific active school budget (or the tenant fallback), and rejects the job when there is no route, no active budget, a non-USD budget, or insufficient remaining funds.
+
+On success, the Worker saves the response and usage, then calls one database function that atomically writes the billable event, closes the request, and releases the reservation. On a retryable failure before a provider response, it releases the reservation before re-queuing.
+
+Required configuration rows:
+- `ai_provider_routes`: one or more enabled routes for the tenant/feature; `input_price_per_million` and `output_price_per_million` must be current positive USD prices for the selected model.
+- `ai_budgets`: an active USD budget for the tenant, optionally at school level; configure monthly amount, monthly request limit, input-token limit and output-token limit.
+
+No route or budget is silently inferred. Missing configuration blocks execution.
+
+### Independent learner requests
+Learner-first tutoring is not charged to a school budget. It uses the separate singleton `platform_ai_runtime_settings`, plus platform reservation and spend ledgers. The singleton is inserted disabled by default. It must be configured with:
+- provider key and exact model ID;
+- current USD input/output prices per million tokens;
+- platform monthly spend cap;
+- platform monthly request cap;
+- maximum input/output tokens.
+
+The runtime remains disabled until all required values are non-null and positive. The Worker reserves chat cost in the platform learner ledger and RAG query-embedding cost in the background-operation ledger. Both ledgers share one platform monthly spend cap, request cap, and token limits.
+
+### RAG embedding price
+Set the Edge Function secret `AI_EMBEDDING_PRICE_PER_MILLION` to the current USD input price for `text-embedding-3-small`. It is mandatory for every embedding operation: tenant RAG retrieval, independent-learner RAG retrieval, curriculum-book ingestion, and queued chunk/question embedding jobs. Each provider call reserves budget before execution and records its own measured cost in `ai_background_budget_events`; the ledger shares the tenant/school or platform monthly spend and request cap with interactive AI.
+
+## Background AI accounting
+
+Question generation requires an enabled `exam_generator` provider route with a non-empty model, positive USD input/output prices, and a valid output-token cap. There is no fallback to a hardcoded provider or model.
+
+If the fallback settlement succeeds, the Worker continues with the already returned provider response instead of issuing another paid request. If both settlement attempts fail, a distinct terminal error prevents automatic job retry; the reservation is retained until expiry and a critical log requires provider-billing reconciliation.
+
+The migration adds:
+- `ai_background_budget_reservations`: pre-call reservations for operations that do not have an `ai_requests` row.
+- `ai_background_budget_events`: one billable event for each successful provider operation, including its type, route, measured tokens and cost.
+- `worker_reserve_background_ai_operation`, `worker_finalize_background_ai_operation`, `worker_fail_background_ai_operation`, and `worker_release_background_ai_operation`: server-only RPCs.
+- `worker_fail_ai_request_after_provider` and `worker_fail_learner_ai_request_after_provider`: charge successful provider calls when response persistence fails and terminally fail the application request.
+
+Background reservations and events are aggregated with `ai_budget_reservations` and `ai_budget_events` when calculating the same school/tenant monthly spend cap. Active background reservations also count against the monthly provider-operation request limit before settlement. The platform background ledger is likewise aggregated with `platform_ai_budget_reservations` and `platform_ai_budget_events`. Shared/global curriculum embeddings use the platform budget and stay blocked unless `platform_ai_runtime_settings` is enabled. The source file extraction and chunking stages are local; the paid embedding stage is budgeted.
+
+The background ledger stores embedding costs separately from the parent chat cost, avoiding double billing. Every provider call has a success/failure event; failed persistence after a successful provider response is charged rather than silently released. For standard tenant AI and independent learner chat, a response persistence failure after provider success marks the request terminally failed and writes a `failed` usage event. For background provider calls, the fallback budget event is `completed` because the provider operation succeeded; the same result is handed back for persistence without another paid provider call. If the real cost or token usage exceeds the reserved cap, the event records `budget_overrun` / `token_limit_exceeded`, and later reservations see the recorded spend. If both the normal settlement RPC and its failure-outcome fallback are unavailable after the provider response, the reservation is retained until its expiry and a critical Worker log is emitted; reconcile this rare distributed failure from provider billing records. This failure window is an external API/database distributed-transaction limitation and must be monitored.
+
+## Configuration examples
+
+These are operator templates, not commands that should be run with placeholder values.
+
+Configure the platform runtime only after choosing the provider/model and verifying its current price sheet:
+
+```sql
+update public.platform_ai_runtime_settings
+set is_enabled = true,
+    provider_key = '<openai|openrouter|gemini|xai>',
+    model_key = '<exact-model-id>',
+    input_price_per_million = <current-usd-input-price>,
+    output_price_per_million = <current-usd-output-price>,
+    monthly_budget_amount = <platform-monthly-usd-cap>,
+    currency = 'USD',
+    monthly_request_limit = <monthly-request-cap>,
+    max_input_tokens = <max-input-tokens>,
+    max_output_tokens = <max-output-tokens>,
+    updated_at = now()
+where singleton = true;
+```
+
+Before enabling, provision the corresponding provider key as a Supabase Edge Function secret. Do not place credentials in this file, migrations, GitHub Actions logs, or browser variables.
+
+For tenant requests, insert the approved `ai_provider_routes` and `ai_budgets` rows through the platform's trusted admin workflow. Do not let a school administrator grant itself unlimited platform spend.
+
+## Worker scheduling and deployment gate
+
+The deployed project currently has a question-generation schedule, but no recurring Worker invocation. The Vault schema and decrypted-secrets view exist, but no credentials are registered there. Do not schedule the Worker through a public unauthenticated endpoint.
+
+Before enabling background execution:
+1. Set `AI_WORKER_INTERNAL_TOKEN` as a Supabase Edge Function secret and provision the same value to the trusted server-side caller.
+2. Keep `verify_jwt=true` on `ai-worker`; the Worker checks both Supabase JWT and the internal token.
+3. Configure `OPENAI_API_KEY` for embeddings and whichever provider secret matches the platform/tenant routes.
+4. Set `AI_EMBEDDING_PRICE_PER_MILLION`.
+5. Store `project_url`, `publishable_key`, and `worker_internal_token` in Supabase Vault, then review and run `docs/AI-WORKER-SCHEDULER.sql` after deploying the protected Worker. The script sends both the Supabase gateway key and the independent `x-worker-token`.
+6. Verify in staging that JWT-only calls, missing-token calls, unpriced routes, missing budgets and budget exhaustion are denied; verify successful calls create exactly one spend event.
+
+The Worker must be invoked by a protected scheduler using a valid Supabase JWT and `x-worker-token`. The current production project has no Worker cron entry, and no Vault-backed credentials are installed. A ready-to-review operator script is maintained separately; do not execute it until the Edge Function is deployed and the Vault secrets are populated.
+
+The AI Gateway has its own `AI_GATEWAY_INTERNAL_TOKEN` and model allowlists. It is currently a separate server-to-server endpoint; the Worker still calls providers directly. Do not assume the Gateway token protects Worker provider calls.
+
+## Snapshot observed during implementation (2026-11-19)
+- `ai_provider_routes`: 0 rows.
+- `ai_budgets`: 0 rows.
+- `ai_budget_reservations`: 0 rows.
+- `ai_budget_events`: 0 rows.
+- `ai_background_budget_reservations` / `ai_background_budget_events`: introduced by this branch migration; not yet applied in production.
+- Supabase Vault schema and `vault.decrypted_secrets` are present; no scheduler credentials are registered. `pg_cron` and `pg_net` are enabled.
+- Active Cron jobs: the existing question-generation scheduler only; no AI Worker schedule.
+- `vault.decrypted_secrets`: no registered scheduler secrets.
+- Deployed `ai-worker` and `ai-gateway` remain at their existing version 1; this feature branch has not been deployed.
+
+Therefore the code is prepared but deliberately fails closed. Do not enable real AI usage until provider prices, limits, secrets, and scheduling are configured and tested in a non-production environment.
+
+
+Background settlement fallback: if a provider responds but normal event finalization fails, the Worker calls `worker_fail_background_ai_operation` to record the actual provider cost as a `completed` provider operation with `settlement_fallback=true` plus over-budget/token-limit metadata, release the reservation, and return the already-generated output to its caller. It does not call the provider again. If both settlement attempts fail, a terminal error prevents automatic job retry; the reservation remains until expiry and a critical log requires manual reconciliation. By contrast, interactive tenant/learner requests whose response persistence fails are recorded as `failed` usage events and marked terminally failed. A hard Worker process termination after the provider has returned but before any settlement RPC commits is not transactionally preventable across an external provider and Postgres. The reservation remains until its 15-minute TTL; an operator must reconcile provider billing and the request/job before manual requeue. The code handles caught provider/persistence/settlement exceptions, but this hard-crash window remains a staging/release risk until a durable provider-start/idempotency design is validated.
+
+
+## Production backup gate
+
+Production migration execution is paused until the Free-plan logical backup procedure in `docs/PRODUCTION-MIGRATION-BACKUP.md` is completed. The app's `backup_jobs` / `restore_jobs` tables are workflow metadata only, not a database dump/restore system. The CLI logical dump excludes Supabase-managed Auth/Storage schemas, so it is not described as a full project recovery image.
+
+
+## Latest implementation validation
+
+GitHub Actions run #74 passed, including the real invalid-key OpenAI integration test. The test only verifies provider HTTP 401/error sanitization; it does not exercise production secrets, database settlement, or a paid completion path.
+
+The tenant background-operation monthly request-cap check now includes unexpired active background reservations, not only completed background events. This prevents concurrent unsettled jobs from bypassing request count limits.

@@ -16,20 +16,25 @@ The connected Supabase project was identified by its school/tenant/student/guard
 
 The repository currently contains a sanitized project inventory, generated public database types, the applied migration history ledger, and encrypted backup automation.
 
-## Important: production frontend source is not yet present
+## Frontend implementation status
 
-The frontend source that powers the actual live My School experience has **not yet been recovered**. The Lovable project called *My School Command Center* is a separate prototype with fictional seed data and a placeholder home route; it is archived in the private `draft` repository, not here.
+A new browser frontend is being implemented under `frontend/` on `feature/platform-expansion-plan`. It is a schema-driven rebuild, **not a recovery of the previous live UI**. It uses Supabase Auth, reads role assignments and permissions from the database, and renders only records returned under the signed-in user's RLS policies. The UI contains no seeded users, sample schools, demo invoices, fake payment results or fabricated performance metrics.
 
-Supabase contains the production database/backend schema, but the migration-history endpoint returned migration names and versions rather than the original SQL files. Do not mistake the metadata ledger for a restore-ready migration directory.
+The implementation is branch-only and has not been deployed. It is not approved for production until the frontend CI build passes, its data flows are verified against an isolated Supabase environment, the server-side tenant-context dependency is resolved for protected modules, and the deployment environment is configured.
 
-This repository is reserved for production. Do not deploy it to Vercel or Cloudflare until the actual production frontend/app source and required migrations have been added and tested.
+The Lovable project called *My School Command Center* remains an archived prototype with fictional seed data in the private `draft` repository; it is not used by this implementation.
+
+Supabase contains the live database/backend schema, but the original SQL bodies for the applied migrations are not fully recovered here. Do not mistake the metadata ledger for a restore-ready migration directory.
+
+Do not deploy this branch to Vercel or Cloudflare until the release gates in `docs/DEPLOYMENT.md` are satisfied.
 
 ## Repository layout
 
 ```text
 olic/
-├── .github/workflows/       # encrypted backup automation
+├── .github/workflows/       # backup automation and frontend CI
 ├── docs/                    # production operations and recovery runbooks
+├── frontend/                # Vite + Supabase browser application (feature branch)
 ├── releases/                # production release manifest
 ├── scripts/backup/          # Storage export and restore utilities
 └── supabase/
@@ -56,4 +61,4 @@ Cloudflare R2 is not enabled on the connected account yet. Enable R2, create a p
 
 ## Deployment status
 
-No Vercel or Cloudflare deployment is currently linked to this repository. Vercel currently has a Git-linked project for `selsep-edu`, which is a separate product. See `docs/DEPLOYMENT.md`.
+A Vercel project named `myschool` is linked to this repository, but its observed READY deployment was built from the older `main` commit without running the Vite frontend build. The intended Vite/Supabase app exists on `feature/platform-expansion-plan` only and is not a production release. Do not treat the current Vercel URL as a working student application. See `docs/DEPLOYMENT.md`.

@@ -1,0 +1,35 @@
+name: Supabase Edge Function Checks
+
+on:
+  pull_request:
+    paths:
+      - "supabase/functions/**"
+      - "supabase/migrations/**"
+      - ".github/workflows/supabase-functions.yml"
+  push:
+    branches:
+      - develop
+    paths:
+      - "supabase/functions/**"
+      - "supabase/migrations/**"
+      - ".github/workflows/supabase-functions.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  worker-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Type-check AI worker and gateway
+        run: deno check supabase/functions/ai-worker/index.ts supabase/functions/ai-gateway/index.ts supabase/functions/school-onboarding/index.ts
+      - name: Run worker and parser tests
+        run: deno test --no-check supabase/functions/school-onboarding/policy.test.ts supabase/functions/ai-gateway/function-route-path.test.ts supabase/functions/_shared/ai-gateway-client.test.ts supabase/functions/ai-worker/worker-auth.test.ts supabase/functions/ai-worker/document-parser.test.ts supabase/functions/ai-worker/budget-math.test.ts supabase/functions/ai-worker/source-url.test.ts supabase/functions/ai-gateway/gateway-auth.test.ts
+      - name: Verify real provider authentication failure (invalid test key, no charge)
+        run: deno test --no-check --allow-net=api.openai.com supabase/functions/ai-worker/provider-error.integration.test.ts

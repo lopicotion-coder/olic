@@ -1,0 +1,106 @@
+name: Database security integration checks
+
+on:
+  pull_request:
+    paths:
+      - "supabase/migrations/**"
+      - "supabase/tests/**"
+      - ".github/workflows/database-security-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: myschool_security_tests
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d myschool_security_tests"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: myschool_security_tests
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: Apply hardening migration and run isolated regression tests
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/content-and-grade-integrity.integration.sql
+      - name: Verify concurrent grade and assessment updates serialize
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          assessment_a="50000000-0000-0000-0000-000000000002"
+          student_a="40000000-0000-0000-0000-000000000003"
+          assessment_b="50000000-0000-0000-0000-000000000003"
+          student_b="40000000-0000-0000-0000-000000000004"
+
+          # Case A: grade write holds the advisory lock first. The assessment
+          # update waits, then must reject a max_score below the committed grade.
+          psql -X -v ON_ERROR_STOP=1 -c "BEGIN;
+            SELECT pg_advisory_xact_lock(hashtextextended('${assessment_a}', 20261121));
+            INSERT INTO public.grades (id, assessment_id, tenant_id, school_id, student_id, score)
+            VALUES ('60000000-0000-0000-0000-000000000011', '${assessment_a}',
+              '10000000-0000-0000-0000-000000000001',
+              '20000000-0000-0000-0000-000000000001', '${student_a}', 150);
+            SELECT pg_sleep(2);
+            COMMIT;" >/tmp/grade-first.log 2>&1 &
+          grade_pid=$!
+          sleep 0.25
+          set +e
+          psql -X -v ON_ERROR_STOP=1 -c "UPDATE public.assessments SET max_score = 100 WHERE id = '${assessment_a}';" >/tmp/assessment-after-grade.log 2>&1
+          update_status=$?
+          wait "$grade_pid"
+          grade_status=$?
+          set -e
+          if [ "$grade_status" -ne 0 ] || [ "$update_status" -eq 0 ] || ! grep -q "ASSESSMENT_MAX_SCORE_BELOW_RECORDED_GRADE" /tmp/assessment-after-grade.log; then
+            cat /tmp/grade-first.log /tmp/assessment-after-grade.log
+            echo "Grade-first concurrency case did not serialize as expected"
+            exit 1
+          fi
+
+          # Case B: assessment update holds the same lock first. A later grade
+          # above the committed max_score must be rejected.
+          psql -X -v ON_ERROR_STOP=1 -c "BEGIN;
+            UPDATE public.assessments SET max_score = 100 WHERE id = '${assessment_b}';
+            SELECT pg_sleep(2);
+            COMMIT;" >/tmp/assessment-first.log 2>&1 &
+          update_pid=$!
+          sleep 0.25
+          set +e
+          psql -X -v ON_ERROR_STOP=1 -c "INSERT INTO public.grades (id, assessment_id, tenant_id, school_id, student_id, score)
+            VALUES ('60000000-0000-0000-0000-000000000012', '${assessment_b}',
+              '10000000-0000-0000-0000-000000000001',
+              '20000000-0000-0000-0000-000000000001', '${student_b}', 150);" >/tmp/grade-after-assessment.log 2>&1
+          grade_status=$?
+          wait "$update_pid"
+          update_status=$?
+          set -e
+          if [ "$update_status" -ne 0 ] || [ "$grade_status" -eq 0 ] || ! grep -q "GRADE_SCORE_OUT_OF_RANGE" /tmp/grade-after-assessment.log; then
+            cat /tmp/assessment-first.log /tmp/grade-after-assessment.log
+            echo "Assessment-first concurrency case did not serialize as expected"
+            exit 1
+          fi
+      - name: Verify direct national_id reads are blocked
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/privacy-column-restrictions.integration.sql
