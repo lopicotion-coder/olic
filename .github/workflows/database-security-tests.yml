@@ -103,4 +103,4 @@ jobs:
           fi
       - name: Verify direct national_id reads are blocked
         run: |
-          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/privacy-column-restrictions.full-schema.integration.sql
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/privacy-column-restrictions.integration.sql
