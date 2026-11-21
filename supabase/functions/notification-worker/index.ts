@@ -65,7 +65,7 @@ async function providerRequest(url: string, init: RequestInit, timeoutMs = 15_00
 
 async function deliverResend(delivery: Delivery): Promise<string | null> {
   if (!RESEND_API_KEY || !RESEND_FROM) throw new Error("RESEND_PROVIDER_NOT_CONFIGURED");
-  let payload;
+  let payload: ReturnType<typeof validateResendPayload>;
   try {
     payload = validateResendPayload(asProviderPayload(delivery.payload));
   } catch (error) {
@@ -90,7 +90,7 @@ async function deliverResend(delivery: Delivery): Promise<string | null> {
 
 async function deliverExpo(delivery: Delivery): Promise<string | null> {
   if (!EXPO_ACCESS_TOKEN) throw new Error("EXPO_PROVIDER_NOT_CONFIGURED");
-  let payload;
+  let payload: ReturnType<typeof validateExpoPayload>;
   try {
     payload = validateExpoPayload(asProviderPayload(delivery.payload));
   } catch (error) {
