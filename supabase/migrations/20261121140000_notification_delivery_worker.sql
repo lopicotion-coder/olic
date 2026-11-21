@@ -35,7 +35,7 @@ begin
   if p_provider_keys is null
      or cardinality(p_provider_keys) < 1
      or cardinality(p_provider_keys) > 2
-     or exists (select 1 from unnest(p_provider_keys) k where k not in ('resend', 'expo')) then
+     or exists (select 1 from unnest(p_provider_keys) as provider_keys(provider_key) where provider_keys.provider_key not in ('resend', 'expo')) then
     raise exception 'INVALID_NOTIFICATION_PROVIDER_FILTER'
       using errcode = '22023';
   end if;
@@ -85,8 +85,8 @@ begin
           and d.locked_at < now() - make_interval(secs => p_lease_seconds))
        )
      order by d.next_attempt_at asc, d.created_at asc
-     for update skip locked
      limit p_batch_size
+     for update skip locked
   )
   update public.notification_deliveries d
      set status = 'processing',
