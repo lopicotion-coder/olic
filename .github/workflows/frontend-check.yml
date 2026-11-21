@@ -34,6 +34,13 @@ jobs:
       - name: Generate temporary lockfile for dependency audit
         working-directory: frontend
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Upload resolved frontend lockfile for reproducible setup
+        uses: actions/upload-artifact@v6
+        with:
+          name: myschool-frontend-lockfile
+          path: frontend/package-lock.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Report resolved dependencies and audit runtime packages
         working-directory: frontend
         run: |
