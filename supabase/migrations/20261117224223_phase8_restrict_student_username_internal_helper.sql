@@ -1,0 +1,1 @@
+REVOKE EXECUTE ON FUNCTION app.ensure_student_username(uuid) FROM myschool_runtime;
