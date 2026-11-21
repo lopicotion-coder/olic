@@ -91,7 +91,7 @@ exception when insufficient_privilege then
 end $unauthorized$;
 
 set role service_role;
-select set_config('request.jwt.claim.role','service_role',true);
+select set_config('request.jwt.claim.role','service_role',false);
 
 do $claim_tests$ 
 declare
