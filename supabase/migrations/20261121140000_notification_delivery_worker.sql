@@ -3,7 +3,8 @@ begin;
 create or replace function public.claim_notification_deliveries(
   p_worker_id text,
   p_batch_size integer default 20,
-  p_lease_seconds integer default 180
+  p_lease_seconds integer default 180,
+  p_provider_keys text[] default array['resend', 'expo']::text[]
 )
 returns setof public.notification_deliveries
 language plpgsql
@@ -28,6 +29,14 @@ begin
 
   if p_lease_seconds is null or p_lease_seconds < 30 or p_lease_seconds > 900 then
     raise exception 'INVALID_NOTIFICATION_WORKER_LEASE'
+      using errcode = '22023';
+  end if;
+
+  if p_provider_keys is null
+     or cardinality(p_provider_keys) < 1
+     or cardinality(p_provider_keys) > 2
+     or exists (select 1 from unnest(p_provider_keys) k where k not in ('resend', 'expo')) then
+    raise exception 'INVALID_NOTIFICATION_PROVIDER_FILTER'
       using errcode = '22023';
   end if;
 
@@ -68,6 +77,7 @@ begin
     select d.id
       from public.notification_deliveries d
      where d.attempts < d.max_attempts
+       and d.provider_key = any(p_provider_keys)
        and (
          (d.status in ('pending', 'failed') and d.next_attempt_at <= now())
          or
@@ -222,21 +232,21 @@ begin
 end;
 $function$;
 
-revoke all on function public.claim_notification_deliveries(text, integer, integer)
+revoke all on function public.claim_notification_deliveries(text, integer, integer, text[])
   from public, anon, authenticated, myschool_runtime;
 revoke all on function public.complete_notification_delivery(uuid, text, text)
   from public, anon, authenticated, myschool_runtime;
 revoke all on function public.fail_notification_delivery(uuid, text, text, integer, boolean)
   from public, anon, authenticated, myschool_runtime;
 
-grant execute on function public.claim_notification_deliveries(text, integer, integer)
+grant execute on function public.claim_notification_deliveries(text, integer, integer, text[])
   to service_role;
 grant execute on function public.complete_notification_delivery(uuid, text, text)
   to service_role;
 grant execute on function public.fail_notification_delivery(uuid, text, text, integer, boolean)
   to service_role;
 
-comment on function public.claim_notification_deliveries(text, integer, integer) is
+comment on function public.claim_notification_deliveries(text, integer, integer, text[]) is
   'Atomically claims notification delivery rows with SKIP LOCKED and lease recovery. Service-role only.';
 comment on function public.complete_notification_delivery(uuid, text, text) is
   'Completes a notification delivery only when the caller still owns the active worker lease. Service-role only.';
