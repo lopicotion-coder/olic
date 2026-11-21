@@ -91,7 +91,6 @@ select set_config('request.jwt.claim.role','service_role',true);
 
 do $claim_tests$ 
 declare
-  v_claimed setof public.notification_deliveries;
   v_first uuid;
   v_count integer;
   v_result text;
@@ -115,37 +114,34 @@ begin
 end;
 $claim_tests$;
 
-reset role;
-select set_config('request.jwt.claim.role','service_role',true);
-
--- The remaining leased deliveries are failed by their actual owners.
+-- Fail the remaining leases using their actual owners. The worker retry path
+-- remains retryable; the permanent 4xx path is quarantined exactly once.
 do $settle_tests$
 declare
   r record;
   v_result text;
 begin
-  for r in select id,locked_by,provider_key from public.notification_deliveries where status='processing' loop
-    v_result := public.fail_notification_delivery(r.id,r.locked_by,'PROVIDER_HTTP_503',503,false);
-    if v_result <> 'failed' then raise exception 'transient failure should be retried: %',v_result; end if;
+  for r in select id,locked_by from public.notification_deliveries where status='processing' order by id loop
+    if r.locked_by = 'worker-00000002' then
+      v_result := public.fail_notification_delivery(r.id,r.locked_by,'INVALID_PROVIDER_PAYLOAD',400,true);
+      if v_result <> 'dead_letter' then raise exception 'permanent failure should be quarantined: %',v_result; end if;
+    else
+      v_result := public.fail_notification_delivery(r.id,r.locked_by,'PROVIDER_HTTP_503',503,false);
+      if v_result <> 'failed' then raise exception 'transient failure should be retried: %',v_result; end if;
+    end if;
   end loop;
-end;
-$settle_tests$;
 
--- Immediate permanent errors go to dead-letter and are recorded once.
-do $dead_letter_test$
-declare
-  r record;
-  v_result text;
-begin
-  select id,locked_by into r from public.notification_deliveries where status='processing' limit 1;
-  if r.id is null then raise exception 'no claimed delivery available for permanent failure'; end if;
-  v_result := public.fail_notification_delivery(r.id,r.locked_by,'INVALID_PROVIDER_PAYLOAD',400,true);
-  if v_result <> 'dead_letter' then raise exception 'permanent failure was not quarantined'; end if;
-  if (select count(*) from public.notification_delivery_dead_letters where delivery_id=r.id) <> 1 then
+  if (select count(*) from public.notification_deliveries where status='failed') <> 1 then
+    raise exception 'transient provider error did not enter retry queue';
+  end if;
+  if (select count(*) from public.notification_deliveries where status='dead_letter') <> 1 then
+    raise exception 'permanent provider error did not enter dead-letter state';
+  end if;
+  if (select count(*) from public.notification_delivery_dead_letters) <> 1 then
     raise exception 'dead-letter record was not inserted exactly once';
   end if;
 end;
-$dead_letter_test$;
+$settle_tests$;
 
 select 'notification delivery worker integration tests passed' as result;
 reset role;
