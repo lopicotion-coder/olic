@@ -1120,9 +1120,20 @@ function renderClasses(data) {
   const setupNotice = canManage && (!data.grades.length || !data.years.length || !data.subjects.length)
     ? `<div class="info-banner">قبل بدء الفصول والواجبات، أنشئ الصفوف والسنوات الدراسية والمواد اللازمة لهذه المدرسة. لا توجد بيانات ابتدائية في Production حاليًا.</div>`
     : "";
+  const academicYearRows = data.years.map((year) => {
+    const activateAction = canSetup && !year.is_current && ["planned", "active"].includes(year.status)
+      ? `<button class="button button-secondary button-small" data-action="rollover-academic-year" data-id="${esc(year.id)}">تعيين كسنة حالية</button>`
+      : year.is_current ? `<span class="status-badge status-active">السنة الحالية</span>` : "—";
+    return `<tr><td><strong>${esc(year.name)}</strong></td><td>${dateText(year.starts_on)} – ${dateText(year.ends_on)}</td><td>${badge(year.status)}</td><td>${activateAction}</td></tr>`;
+  });
+  const academicYearPanel = canSetup
+    ? sectionHead("السنوات الدراسية", "تفعيل سنة جديدة ينفذ ترحيلًا ذريًا ويغلق السنة الحالية السابقة.")
+      + table(["السنة","الفترة","الحالة","الإجراء"], academicYearRows, "لا توجد سنوات دراسية مسجلة.")
+    : "";
   return sectionHead("الفصول والإعداد الأكاديمي", "إدارة السنوات الدراسية والصفوف والمواد والفصول.", `${setupActions}${canManage ? `<button class="button button-secondary" data-action="toggle-form" data-target="class-form">إنشاء فصل</button>` : ""}`)
-    + setupNotice
     + academicYearForm
+    + academicYearPanel
+    + setupNotice
     + (canManage ? `<section id="class-form" class="panel form-panel hidden">${data.grades.length && data.years.length ? form : emptyState("لا توجد صفوف أو سنوات دراسية مسجلة تسمح بإنشاء فصل.")}</section>` : "")
     + table(["الفصل","الصف الدراسي","السنة الدراسية","السعة","الحالة"], rowsHtml, "لا توجد فصول مسجلة في هذا النطاق.");
 }
@@ -1769,17 +1780,34 @@ async function perform(action) {
       if (!["planned","active"].includes(status)) throw new Error("حالة السنة الدراسية غير صحيحة.");
       const isCurrent = action.formData.get("is_current") === "on";
       if (isCurrent && status !== "active") throw new Error("السنة الحالية يجب أن تكون نشطة.");
-      const currentExists = (state.data?.years ?? []).some((item)=>item.school_id===schoolId && item.is_current);
-      if (isCurrent && currentExists) throw new Error("يوجد بالفعل سنة حالية لهذه المدرسة. لا يمكن تعيين أكثر من سنة حالية قبل إغلاق السنة السابقة.");
-      await mutation(supabase.from("academic_years").insert({
-        tenant_id: ctx.tenantId,
-        school_id: schoolId,
-        name,
-        starts_on: startsOn,
-        ends_on: endsOn,
-        status,
-        is_current: isCurrent,
-      }), "إنشاء السنة الدراسية");
+
+      const { data: createdYear, error: createYearError } = await supabase.from("academic_years")
+        .insert({
+          tenant_id: ctx.tenantId,
+          school_id: schoolId,
+          name,
+          starts_on: startsOn,
+          ends_on: endsOn,
+          status,
+        })
+        .select("id")
+        .single();
+      if (createYearError) throw createYearError;
+
+      if (isCurrent) {
+        const currentYear = (state.data?.years ?? []).find((item) =>
+          item.tenant_id === ctx.tenantId && item.school_id === schoolId && item.is_current
+        );
+        const { error: rolloverError } = await supabase.rpc("rollover_academic_year", {
+          p_tenant_id: ctx.tenantId,
+          p_school_id: schoolId,
+          p_target_academic_year_id: createdYear.id,
+          p_expected_current_academic_year_id: currentYear?.id ?? null,
+        });
+        if (rolloverError) {
+          throw new Error(`تم إنشاء السنة الدراسية، لكن تعذر تفعيلها وترحيل السنة الحالية: ${rolloverError.message}`);
+        }
+      }
       break;
     }
     case "create-grade-level": {
@@ -2370,6 +2398,28 @@ root.addEventListener("click", async (event) => {
     } else if (type === "toggle-form") {
       const target = document.getElementById(button.dataset.target);
       target?.classList.toggle("hidden");
+    } else if (type === "rollover-academic-year") {
+      if (!has("academics.manage")) throw new Error("لا تملك صلاحية ترحيل السنة الدراسية.");
+      const targetYear = (state.data?.years ?? []).find((item) => item.id === button.dataset.id);
+      if (!targetYear || !["planned", "active"].includes(targetYear.status)) {
+        throw new Error("السنة المختارة غير متاحة للتفعيل.");
+      }
+      const { data: currentYear, error: currentError } = await supabase.from("academic_years")
+        .select("id")
+        .eq("tenant_id", targetYear.tenant_id)
+        .eq("school_id", targetYear.school_id)
+        .eq("is_current", true)
+        .maybeSingle();
+      if (currentError) throw currentError;
+      const { error: rolloverError } = await supabase.rpc("rollover_academic_year", {
+        p_tenant_id: targetYear.tenant_id,
+        p_school_id: targetYear.school_id,
+        p_target_academic_year_id: targetYear.id,
+        p_expected_current_academic_year_id: currentYear?.id ?? null,
+      });
+      if (rolloverError) throw rolloverError;
+      showToast("تم ترحيل السنة الدراسية وتحديث السنة الحالية وتسجيل العملية.");
+      await loadSection();
     } else if (type === "open-conversation") {
       state.selectedConversationId = button.dataset.id;
       await loadSection();
