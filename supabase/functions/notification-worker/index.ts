@@ -112,7 +112,8 @@ async function deliverExpo(delivery: Delivery): Promise<string | null> {
   const data = await response.json().catch(() => ({}));
   const ticket = Array.isArray(data?.data) ? data.data[0] : data?.data;
   if (ticket?.status === "error") {
-    const code = typeof ticket.details?.error === "string" ? ticket.details.error : "EXPO_TICKET_REJECTED";
+    const rawCode = typeof ticket.details?.error === "string" ? ticket.details.error : "";
+    const code = /^[A-Z][A-Za-z0-9_]{0,63}$/.test(rawCode) ? rawCode : "EXPO_TICKET_REJECTED";
     throw Object.assign(new Error(code), { httpStatus: response.status, permanent: true });
   }
   return typeof ticket?.id === "string" ? ticket.id : null;
@@ -130,6 +131,8 @@ Deno.serve(async (request: Request) => {
   if (WORKER_TOKEN.length < 32) return json({ error: "NOTIFICATION_WORKER_NOT_CONFIGURED" }, 503);
   if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return json({ error: "SUPABASE_WORKER_NOT_CONFIGURED" }, 503);
 
+  const declaredLength = Number(request.headers.get("content-length") ?? "0");
+  if (declaredLength > MAX_BODY_BYTES) return json({ error: "REQUEST_TOO_LARGE" }, 413);
   const supplied = request.headers.get("x-myschool-notification-worker-token") ?? "";
   if (!(await constantTimeMatch(supplied, WORKER_TOKEN))) return json({ error: "NOT_FOUND" }, 404);
 
