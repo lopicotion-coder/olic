@@ -88,3 +88,9 @@ If a complete managed backup/restore point is required rather than this limited 
 ## Current execution state
 
 No production migration has been applied and no Edge Function has been replaced. The branch passed GitHub Actions run #74, including the invalid-provider-key integration check. The operator must perform the PowerShell dump and verify the three files before any production schema change.
+
+## 2026-11-21 reconciliation update
+
+The hosted migration ledger now contains 41 entries. Their executed SQL statement arrays have been reconstructed into `supabase/migrations/` on the current feature branch and cross-checked by filename and total SQL length. The reconstruction is not guaranteed to reproduce original comments/formatting.
+
+The new migration history is source-control recovery, not a backup or replay test. The Production schema was not reset or modified by this recovery. The zero-budget release gate remains: perform and verify the private manual dump, then test a full replay and restore on a disposable environment before production rollout. Do not create billable staging resources without explicit budget approval.
