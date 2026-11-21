@@ -31,6 +31,11 @@ jobs:
       - name: Install dependencies
         working-directory: frontend
         run: npm install --no-audit --no-fund --package-lock=false
+      - name: Report resolved dependencies and audit runtime packages
+        working-directory: frontend
+        run: |
+          npm ls --depth=0
+          npm audit --omit=dev --audit-level=high
       - name: Run access-control unit tests
         working-directory: frontend
         run: npm test
