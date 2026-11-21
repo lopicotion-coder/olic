@@ -30,8 +30,8 @@ using (
 );
 
 -- Enforce the assessment score ceiling in the database, not only in the UI.
--- The parent assessment row is locked so concurrent grade writes and max_score
--- updates serialize on the same row.
+-- A shared transaction-scoped advisory lock serializes grade writes and
+-- assessment max_score updates without introducing a row/advisory lock cycle.
 create or replace function app.enforce_grade_assessment_max_score()
 returns trigger
 language plpgsql
@@ -79,8 +79,8 @@ for each row
 execute function app.enforce_grade_assessment_max_score();
 
 -- A later reduction of assessments.max_score must not invalidate grades
--- that have already been recorded. The assessment row is already locked by
--- PostgreSQL for this UPDATE; grade writes lock the same parent row above.
+-- that have already been recorded. This trigger uses the same advisory lock
+-- as the grade trigger, so the two write paths serialize consistently.
 create or replace function app.prevent_assessment_max_score_below_existing_grades()
 returns trigger
 language plpgsql
