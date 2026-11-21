@@ -92,6 +92,7 @@ select set_config('request.jwt.claim.role','service_role',true);
 do $claim_tests$ 
 declare
   v_first uuid;
+  v_other_worker uuid;
   v_count integer;
   v_result text;
 begin
@@ -107,8 +108,14 @@ begin
   v_result := public.complete_notification_delivery(v_first,'worker-00000001','provider-message-1');
   if v_result <> 'sent' then raise exception 'valid lease did not complete: %',v_result; end if;
 
+  select id into v_other_worker
+    from public.notification_deliveries
+   where status='processing' and locked_by='worker-00000002'
+   limit 1;
+  if v_other_worker is null then raise exception 'second worker did not hold a delivery'; end if;
+
   v_result := public.fail_notification_delivery(
-    '50000000-0000-0000-0000-000000000002','worker-00000001','RESEND_HTTP_503',503,false
+    v_other_worker,'worker-00000001','RESEND_HTTP_503',503,false
   );
   if v_result <> 'lease_lost' then raise exception 'worker without lease must not settle another worker row: %',v_result; end if;
 end;
