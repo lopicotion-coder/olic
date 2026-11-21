@@ -45,6 +45,9 @@ jobs:
       - name: Apply hardening migration and run isolated regression tests
         run: |
           psql -X -v ON_ERROR_STOP=1 -f supabase/tests/content-and-grade-integrity.integration.sql
+      - name: Verify atomic academic-year rollover
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f supabase/tests/academic-year-rollover.integration.sql
       - name: Verify concurrent grade and assessment updates serialize
         shell: bash
         run: |
