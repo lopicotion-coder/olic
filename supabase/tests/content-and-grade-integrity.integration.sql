@@ -423,5 +423,14 @@ begin
 end;
 $grade_integrity_tests$;
 
+-- Separate assessments for two-session concurrency tests in the workflow.
+insert into public.assessments (id, tenant_id, school_id, max_score) values
+  ('50000000-0000-0000-0000-000000000002',
+   '10000000-0000-0000-0000-000000000001',
+   '20000000-0000-0000-0000-000000000001', 200),
+  ('50000000-0000-0000-0000-000000000003',
+   '10000000-0000-0000-0000-000000000001',
+   '20000000-0000-0000-0000-000000000001', 200);
+
 -- Leave this disposable database with a clear success marker for CI logs.
 select 'content and grade integrity integration tests passed' as result;
