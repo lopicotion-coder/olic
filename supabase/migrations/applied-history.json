@@ -1,127 +1,298 @@
 {
-  "captured_at": "2026-11-17",
+  "captured_at": "2026-11-21",
   "project_ref": "yigixquioguqnpbfhepi",
-  "migration_count": 30,
+  "migration_count": 41,
+  "production_applied_through": "20261121115037",
+  "recovery_method": "Reconstructed from Supabase supabase_migrations.schema_migrations by concatenating the stored executed statement array in order.",
+  "fidelity_note": "The SQL files preserve the executed SQL statements and were length-checked against the hosted ledger. Original source comments, file formatting and any non-executed client directives are not guaranteed to be recoverable.",
+  "replay_note": "These 41 files represent the hosted Production migration history at capture time. Later feature migrations in this directory are branch-only and are not included in this production-applied manifest.",
   "migrations": [
     {
       "version": "20261114151023",
-      "name": "202611140001_foundation"
+      "name": "202611140001_foundation",
+      "filename": "20261114151023_202611140001_foundation.sql",
+      "executed_sql_length": 38358,
+      "hosted_ledger_md5": "1ebe24f8fc2ac62417b8d1593a17fc2c"
     },
     {
       "version": "20261114151200",
-      "name": "202611140002_core_school"
+      "name": "202611140002_core_school",
+      "filename": "20261114151200_202611140002_core_school.sql",
+      "executed_sql_length": 51869,
+      "hosted_ledger_md5": "28006dc7febc5e4bf3098077a6e0c45c"
     },
     {
       "version": "20261114151243",
-      "name": "202611140003_phase3_communication_analytics"
+      "name": "202611140003_phase3_communication_analytics",
+      "filename": "20261114151243_202611140003_phase3_communication_analytics.sql",
+      "executed_sql_length": 35144,
+      "hosted_ledger_md5": "1163663a9f531f2a1a8ab4c48f04ca35"
     },
     {
       "version": "20261114151441",
-      "name": "202611140004_phase5_platform_ops"
+      "name": "202611140004_phase5_platform_ops",
+      "filename": "20261114151441_202611140004_phase5_platform_ops.sql",
+      "executed_sql_length": 18045,
+      "hosted_ledger_md5": "a0ab84050f2ba6f19bd73f787a5a11ae"
     },
     {
       "version": "20261114151514",
-      "name": "202611140005_phase5_ai_budget_provider_hardening"
+      "name": "202611140005_phase5_ai_budget_provider_hardening",
+      "filename": "20261114151514_202611140005_phase5_ai_budget_provider_hardening.sql",
+      "executed_sql_length": 8738,
+      "hosted_ledger_md5": "5e62ed7a5c7212b22a8ebd146f94a78f"
     },
     {
       "version": "20261114151539",
-      "name": "202611140006_phase6_core_completion"
+      "name": "202611140006_phase6_core_completion",
+      "filename": "20261114151539_202611140006_phase6_core_completion.sql",
+      "executed_sql_length": 18000,
+      "hosted_ledger_md5": "691b389683303254205f1d360361c842"
     },
     {
       "version": "20261114151622",
-      "name": "202611140007_phase6_security_and_data_hardening"
+      "name": "202611140007_phase6_security_and_data_hardening",
+      "filename": "20261114151622_202611140007_phase6_security_and_data_hardening.sql",
+      "executed_sql_length": 25070,
+      "hosted_ledger_md5": "05e4236542a190eacdec2c1334245766"
     },
     {
       "version": "20261114151730",
-      "name": "phase6_security_function_search_path_hardening"
+      "name": "phase6_security_function_search_path_hardening",
+      "filename": "20261114151730_phase6_security_function_search_path_hardening.sql",
+      "executed_sql_length": 553,
+      "hosted_ledger_md5": "c8d1b29d2e7a86f00adbe7705ac216f3"
     },
     {
       "version": "20261114151756",
-      "name": "phase6_rag_foundation"
+      "name": "phase6_rag_foundation",
+      "filename": "20261114151756_phase6_rag_foundation.sql",
+      "executed_sql_length": 5095,
+      "hosted_ledger_md5": "058269f7a4eb581f0550c302316da2f4"
     },
     {
       "version": "20261114151904",
-      "name": "phase6_rls_auth_initplan_optimization"
+      "name": "phase6_rls_auth_initplan_optimization",
+      "filename": "20261114151904_phase6_rls_auth_initplan_optimization.sql",
+      "executed_sql_length": 1469,
+      "hosted_ledger_md5": "ab73f4fb51fdc398776b3e5722933196"
     },
     {
       "version": "20261114151927",
-      "name": "phase6_runtime_login_role"
+      "name": "phase6_runtime_login_role",
+      "filename": "20261114151927_phase6_runtime_login_role.sql",
+      "executed_sql_length": 344,
+      "hosted_ledger_md5": "47ad70be315e59765eb283ed45e0b289"
     },
     {
       "version": "20261114154619",
-      "name": "phase7_communication_completion"
+      "name": "phase7_communication_completion",
+      "filename": "20261114154619_phase7_communication_completion.sql",
+      "executed_sql_length": 19042,
+      "hosted_ledger_md5": "117fa5e540b150b52a3f69e83ae3bf09"
     },
     {
       "version": "20261114154727",
-      "name": "phase7_attachment_records"
+      "name": "phase7_attachment_records",
+      "filename": "20261114154727_phase7_attachment_records.sql",
+      "executed_sql_length": 5712,
+      "hosted_ledger_md5": "0c697a34e6d42b4e269bf2e42b8f60cc"
     },
     {
       "version": "20261114154739",
-      "name": "phase7_storage_private_attachment_policies"
+      "name": "phase7_storage_private_attachment_policies",
+      "filename": "20261114154739_phase7_storage_private_attachment_policies.sql",
+      "executed_sql_length": 6121,
+      "hosted_ledger_md5": "a0ec15bb8578ca85b60da0b220d2a4ba"
     },
     {
       "version": "20261114154746",
-      "name": "phase7_notification_delivery_tracking"
+      "name": "phase7_notification_delivery_tracking",
+      "filename": "20261114154746_phase7_notification_delivery_tracking.sql",
+      "executed_sql_length": 4139,
+      "hosted_ledger_md5": "456f0931cca77ddc0f1e0e0a12ee35cd"
     },
     {
       "version": "20261114155059",
-      "name": "phase7_push_device_worker_access"
+      "name": "phase7_push_device_worker_access",
+      "filename": "20261114155059_phase7_push_device_worker_access.sql",
+      "executed_sql_length": 2251,
+      "hosted_ledger_md5": "d3d7e7631703cea2e4d06f8cb3983ac8"
     },
     {
       "version": "20261114155119",
-      "name": "phase7_notification_preferences_worker_access"
+      "name": "phase7_notification_preferences_worker_access",
+      "filename": "20261114155119_phase7_notification_preferences_worker_access.sql",
+      "executed_sql_length": 324,
+      "hosted_ledger_md5": "eab15677f1adb349c3e41b891055a2d1"
     },
     {
       "version": "20261114155426",
-      "name": "phase7_notification_worker_least_privilege"
+      "name": "phase7_notification_worker_least_privilege",
+      "filename": "20261114155426_phase7_notification_worker_least_privilege.sql",
+      "executed_sql_length": 9833,
+      "hosted_ledger_md5": "5322a2322756d2f1eb6942964b68987f"
     },
     {
       "version": "20261114155605",
-      "name": "phase7_communication_foreign_key_indexes"
+      "name": "phase7_communication_foreign_key_indexes",
+      "filename": "20261114155605_phase7_communication_foreign_key_indexes.sql",
+      "executed_sql_length": 2232,
+      "hosted_ledger_md5": "57cd7280afaf97c83e89e430619cfdda"
     },
     {
       "version": "20261114162352",
-      "name": "phase7_support_sla_worker"
+      "name": "phase7_support_sla_worker",
+      "filename": "20261114162352_phase7_support_sla_worker.sql",
+      "executed_sql_length": 9698,
+      "hosted_ledger_md5": "1afbb6cec0d5025568a7afd12ea85c60"
     },
     {
       "version": "20261114164930",
-      "name": "phase7_student_enrollment_access"
+      "name": "phase7_student_enrollment_access",
+      "filename": "20261114164930_phase7_student_enrollment_access.sql",
+      "executed_sql_length": 17251,
+      "hosted_ledger_md5": "b5361751f95dfb35ded7aa128fbd793c"
     },
     {
       "version": "20261114165238",
-      "name": "phase7_student_password_reset_hardening"
+      "name": "phase7_student_password_reset_hardening",
+      "filename": "20261114165238_phase7_student_password_reset_hardening.sql",
+      "executed_sql_length": 4479,
+      "hosted_ledger_md5": "aabfe9e60157c7fd7137db568475545f"
     },
     {
       "version": "20261114165426",
-      "name": "phase7_student_enrollment_query_hardening"
+      "name": "phase7_student_enrollment_query_hardening",
+      "filename": "20261114165426_phase7_student_enrollment_query_hardening.sql",
+      "executed_sql_length": 2887,
+      "hosted_ledger_md5": "5365d7dbb8a66d242b06e8cbf6a9ffc6"
     },
     {
       "version": "20261114183307",
-      "name": "phase7_parent_student_identity"
+      "name": "phase7_parent_student_identity",
+      "filename": "20261114183307_phase7_parent_student_identity.sql",
+      "executed_sql_length": 24891,
+      "hosted_ledger_md5": "11f77e66e5af459d180ce60fac15481d"
     },
     {
       "version": "20261114183340",
-      "name": "phase7_parent_portal_snapshot"
+      "name": "phase7_parent_portal_snapshot",
+      "filename": "20261114183340_phase7_parent_portal_snapshot.sql",
+      "executed_sql_length": 3959,
+      "hosted_ledger_md5": "ebf7c4e8407ddc530189c67747e7fcbc"
     },
     {
       "version": "20261114183437",
-      "name": "phase7_parent_portal_snapshot_hardening"
+      "name": "phase7_parent_portal_snapshot_hardening",
+      "filename": "20261114183437_phase7_parent_portal_snapshot_hardening.sql",
+      "executed_sql_length": 4660,
+      "hosted_ledger_md5": "9fcfc69abebb9ad5685a615a9aa5617d"
     },
     {
       "version": "20261114183452",
-      "name": "phase7_parent_school_lookup"
+      "name": "phase7_parent_school_lookup",
+      "filename": "20261114183452_phase7_parent_school_lookup.sql",
+      "executed_sql_length": 1760,
+      "hosted_ledger_md5": "56183b9e53ba20c16d99f221f5ebe741"
     },
     {
       "version": "20261114184136",
-      "name": "phase7_parent_student_identity_hardening"
+      "name": "phase7_parent_student_identity_hardening",
+      "filename": "20261114184136_phase7_parent_student_identity_hardening.sql",
+      "executed_sql_length": 17813,
+      "hosted_ledger_md5": "d59b04e6fb97628510738bf8da7be7e1"
     },
     {
       "version": "20261114184148",
-      "name": "phase7_student_login_toggle_fix"
+      "name": "phase7_student_login_toggle_fix",
+      "filename": "20261114184148_phase7_student_login_toggle_fix.sql",
+      "executed_sql_length": 3116,
+      "hosted_ledger_md5": "1bdce1d7dee72f5d321922ec225f158a"
     },
     {
       "version": "20261114184346",
-      "name": "phase7_parent_enrollment_notifications_and_profile"
+      "name": "phase7_parent_enrollment_notifications_and_profile",
+      "filename": "20261114184346_phase7_parent_enrollment_notifications_and_profile.sql",
+      "executed_sql_length": 5973,
+      "hosted_ledger_md5": "8773e7bd7bd05a2fa24c462adf377dfd"
+    },
+    {
+      "version": "20261117223622",
+      "name": "phase8_runtime_self_scope_read_policies",
+      "filename": "20261117223622_phase8_runtime_self_scope_read_policies.sql",
+      "executed_sql_length": 945,
+      "hosted_ledger_md5": "5508e8ad7af32082ed028dc892764187"
+    },
+    {
+      "version": "20261117223704",
+      "name": "phase8_remove_duplicate_self_read_policies",
+      "filename": "20261117223704_phase8_remove_duplicate_self_read_policies.sql",
+      "executed_sql_length": 345,
+      "hosted_ledger_md5": "766f60784d0efd58c3ac04e2b652fe71"
+    },
+    {
+      "version": "20261117224223",
+      "name": "phase8_restrict_student_username_internal_helper",
+      "filename": "20261117224223_phase8_restrict_student_username_internal_helper.sql",
+      "executed_sql_length": 83,
+      "hosted_ledger_md5": "0f67c0d221a4c8a861391965c2c84f7e"
+    },
+    {
+      "version": "20261118102448",
+      "name": "20261118000200_secure_authenticated_access_and_integrity",
+      "filename": "20261118102448_20261118000200_secure_authenticated_access_and_integrity.sql",
+      "executed_sql_length": 13369,
+      "hosted_ledger_md5": "cad746a72e39eee01588fb5b99148fef"
+    },
+    {
+      "version": "20261118112644",
+      "name": "phase9_ai_curriculum_question_bank",
+      "filename": "20261118112644_phase9_ai_curriculum_question_bank.sql",
+      "executed_sql_length": 40698,
+      "hosted_ledger_md5": "e7838f7918fabdae074c9a59c4c72112"
+    },
+    {
+      "version": "20261118113301",
+      "name": "phase9_internal_worker_policies",
+      "filename": "20261118113301_phase9_internal_worker_policies.sql",
+      "executed_sql_length": 709,
+      "hosted_ledger_md5": "19a61928de009ace1df3747494b322b2"
+    },
+    {
+      "version": "20261118113645",
+      "name": "phase9_background_queue_extensions",
+      "filename": "20261118113645_phase9_background_queue_extensions.sql",
+      "executed_sql_length": 288,
+      "hosted_ledger_md5": "8af9f3e3a87f13e08b2659b2c6697097"
+    },
+    {
+      "version": "20261118114203",
+      "name": "phase9_question_generation_scheduler",
+      "filename": "20261118114203_phase9_question_generation_scheduler.sql",
+      "executed_sql_length": 7749,
+      "hosted_ledger_md5": "48ecc9a030574ac6ad9d452867cdab41"
+    },
+    {
+      "version": "20261118114427",
+      "name": "phase9_publish_jobs_to_pgmq",
+      "filename": "20261118114427_phase9_publish_jobs_to_pgmq.sql",
+      "executed_sql_length": 2927,
+      "hosted_ledger_md5": "6cabe91a8f9e06fdf74f0fd06316746c"
+    },
+    {
+      "version": "20261118114708",
+      "name": "phase9_question_scope_and_audit_hardening",
+      "filename": "20261118114708_phase9_question_scope_and_audit_hardening.sql",
+      "executed_sql_length": 4666,
+      "hosted_ledger_md5": "83881b84596f42e5b18ec953312c0123"
+    },
+    {
+      "version": "20261121115037",
+      "name": "phase8_ai_experience_feedback_reconciliation",
+      "filename": "20261121115037_phase8_ai_experience_feedback_reconciliation.sql",
+      "executed_sql_length": 2274,
+      "hosted_ledger_md5": "3f64a28342039cec67f8121089385d15"
     }
   ]
 }
