@@ -5,7 +5,7 @@ begin;
 -- only authenticated path that can promote a year and close its predecessor.
 revoke insert, update on public.academic_years from public, anon, authenticated, myschool_runtime;
 
-grant insert (tenant_id, school_id, name, starts_on, ends_on, status)
+grant insert (id, tenant_id, school_id, name, starts_on, ends_on, status)
   on public.academic_years to authenticated, myschool_runtime;
 
 grant update (name, starts_on, ends_on)
