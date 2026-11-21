@@ -65,7 +65,12 @@ async function providerRequest(url: string, init: RequestInit, timeoutMs = 15_00
 
 async function deliverResend(delivery: Delivery): Promise<string | null> {
   if (!RESEND_API_KEY || !RESEND_FROM) throw new Error("RESEND_PROVIDER_NOT_CONFIGURED");
-  const payload = validateResendPayload(asProviderPayload(delivery.payload));
+  let payload;
+  try {
+    payload = validateResendPayload(asProviderPayload(delivery.payload));
+  } catch (error) {
+    throw Object.assign(new Error((error as Error).message), { httpStatus: 400, permanent: true });
+  }
   const response = await providerRequest("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -85,7 +90,12 @@ async function deliverResend(delivery: Delivery): Promise<string | null> {
 
 async function deliverExpo(delivery: Delivery): Promise<string | null> {
   if (!EXPO_ACCESS_TOKEN) throw new Error("EXPO_PROVIDER_NOT_CONFIGURED");
-  const payload = validateExpoPayload(asProviderPayload(delivery.payload));
+  let payload;
+  try {
+    payload = validateExpoPayload(asProviderPayload(delivery.payload));
+  } catch (error) {
+    throw Object.assign(new Error((error as Error).message), { httpStatus: 400, permanent: true });
+  }
   const response = await providerRequest("https://exp.host/--/api/v2/push/send", {
     method: "POST",
     headers: {
@@ -135,6 +145,13 @@ Deno.serve(async (request: Request) => {
   if (!Number.isInteger(requestedBatch) || requestedBatch < 1 || requestedBatch > 50) {
     return json({ error: "INVALID_BATCH_SIZE" }, 400);
   }
+  const enabledProviders = [
+    ...(RESEND_API_KEY && RESEND_FROM ? ["resend"] : []),
+    ...(EXPO_ACCESS_TOKEN ? ["expo"] : []),
+  ];
+  if (!enabledProviders.length) {
+    return json({ error: "NO_NOTIFICATION_PROVIDER_CONFIGURED" }, 503);
+  }
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -144,6 +161,7 @@ Deno.serve(async (request: Request) => {
     p_worker_id: workerId,
     p_batch_size: requestedBatch,
     p_lease_seconds: 180,
+    p_provider_keys: enabledProviders,
   });
   if (claimError) {
     console.error("Notification delivery claim failed", { code: claimError.code ?? "UNKNOWN" });
