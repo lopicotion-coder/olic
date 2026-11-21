@@ -13,7 +13,7 @@ for select
 to authenticated, myschool_runtime
 using (
   (
-    status = 'published'::content_status
+    status = 'published'::public.content_status
     and (
       (
         class_id is null
