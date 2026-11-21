@@ -41,13 +41,17 @@ as $function$
 declare
   v_max_score numeric;
 begin
+  -- Both grade writes and assessment max-score updates take this same
+  -- transaction-scoped advisory lock before checking the other table.
+  -- The next SQL statement then sees a fresh READ COMMITTED snapshot.
+  perform pg_advisory_xact_lock(hashtextextended(new.assessment_id::text, 20261121));
+
   select a.max_score
     into v_max_score
   from public.assessments as a
   where a.id = new.assessment_id
     and a.tenant_id = new.tenant_id
-    and a.school_id = new.school_id
-  for update;
+    and a.school_id = new.school_id;
 
   if not found then
     raise exception 'GRADE_ASSESSMENT_SCOPE_MISMATCH'
@@ -84,6 +88,10 @@ security definer
 set search_path = pg_catalog
 as $function$
 begin
+  if new.max_score is distinct from old.max_score then
+    perform pg_advisory_xact_lock(hashtextextended(new.id::text, 20261121));
+  end if;
+
   if new.max_score is distinct from old.max_score
      and exists (
        select 1
@@ -114,8 +122,8 @@ for each row
 execute function app.prevent_assessment_max_score_below_existing_grades();
 
 comment on function app.enforce_grade_assessment_max_score() is
-  'Rejects grades outside the referenced assessment max_score while locking the assessment row to serialize concurrent changes.';
+  'Rejects grades outside the referenced assessment max_score while using a transaction advisory lock shared with assessment updates.';
 comment on function app.prevent_assessment_max_score_below_existing_grades() is
-  'Prevents reducing an assessment max_score below any existing recorded grade.';
+  'Prevents reducing an assessment max_score below any existing recorded grade using a transaction advisory lock shared with grade writes.';
 
 commit;
