@@ -1,9 +1,9 @@
 \set ON_ERROR_STOP on
 
 -- Disposable PostgreSQL 17 integration harness. Never run against Production.
-do $$ begin create role anon nologin; exception when duplicate_object then null; end $$;
-do $$ begin create role authenticated nologin; exception when duplicate_object then null; end $$;
-do $$ begin create role myschool_runtime nologin; exception when duplicate_object then null; end $$;
+do $ begin create role anon nologin; exception when duplicate_object then null; end $;
+do $ begin create role authenticated nologin; exception when duplicate_object then null; end $;
+do $ begin create role myschool_runtime nologin; exception when duplicate_object then null; end $;
 
 create schema if not exists app;
 create schema if not exists auth;
