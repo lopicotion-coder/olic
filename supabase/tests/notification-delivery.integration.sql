@@ -62,6 +62,8 @@ create table public.notification_delivery_dead_letters (
 
 grant usage on schema auth to service_role, authenticated, myschool_runtime;
 grant execute on function auth.role() to service_role, authenticated, myschool_runtime;
+grant select on public.notification_deliveries, public.notification_delivery_attempts,
+  public.notification_delivery_dead_letters to service_role;
 
 -- Apply the exact migration under test.
 \ir ../migrations/20261121140000_notification_delivery_worker.sql
@@ -96,13 +98,13 @@ declare
   v_count integer;
   v_result text;
 begin
-  select count(*) into v_count from public.claim_notification_deliveries('worker-00000001', 2, 180);
+  select count(*) into v_count from public.claim_notification_deliveries('worker-00000001', 2, 180, array['resend']);
   if v_count <> 2 then raise exception 'expected two claimed deliveries, got %',v_count; end if;
 
   select id into v_first from public.notification_deliveries where status='processing' and locked_by='worker-00000001' order by id limit 1;
   if v_first is null then raise exception 'first claim did not return a locked row'; end if;
 
-  select count(*) into v_count from public.claim_notification_deliveries('worker-00000002', 2, 180);
+  select count(*) into v_count from public.claim_notification_deliveries('worker-00000002', 2, 180, array['expo']);
   if v_count <> 1 then raise exception 'second worker should claim only the unclaimed row, got %',v_count; end if;
 
   v_result := public.complete_notification_delivery(v_first,'worker-00000001','provider-message-1');
