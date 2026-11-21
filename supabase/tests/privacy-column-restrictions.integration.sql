@@ -46,20 +46,32 @@ grant select on public.student_enrollment_requests to authenticated, myschool_ru
 -- The browser-facing roles must not be able to select national_id directly.
 do $privacy_tests$
 declare
-  v_students_ok boolean;
-  v_requests_ok boolean;
+  v_students_auth boolean;
+  v_requests_auth boolean;
+  v_students_runtime boolean;
+  v_requests_runtime boolean;
   v_students_id_ok boolean;
 begin
-  select has_column_privilege('authenticated', 'public.students', 'national_id', 'select') into v_students_ok;
-  select has_column_privilege('authenticated', 'public.student_enrollment_requests', 'national_id', 'select') into v_requests_ok;
+  select has_column_privilege('authenticated', 'public.students', 'national_id', 'select') into v_students_auth;
+  select has_column_privilege('authenticated', 'public.student_enrollment_requests', 'national_id', 'select') into v_requests_auth;
+  select has_column_privilege('myschool_runtime', 'public.students', 'national_id', 'select') into v_students_runtime;
+  select has_column_privilege('myschool_runtime', 'public.student_enrollment_requests', 'national_id', 'select') into v_requests_runtime;
   select has_column_privilege('authenticated', 'public.students', 'id', 'select') into v_students_id_ok;
 
-  if v_students_ok then
+  if v_students_auth then
     raise exception 'authenticated can still read public.students.national_id';
   end if;
 
-  if v_requests_ok then
+  if v_requests_auth then
     raise exception 'authenticated can still read public.student_enrollment_requests.national_id';
+  end if;
+
+  if v_students_runtime then
+    raise exception 'myschool_runtime can still read public.students.national_id';
+  end if;
+
+  if v_requests_runtime then
+    raise exception 'myschool_runtime can still read public.student_enrollment_requests.national_id';
   end if;
 
   if not v_students_id_ok then
